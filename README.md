@@ -12,6 +12,7 @@ hahmovaihtoehdot, NPC:t ja sceneet. Pelitila tallentuu SQLite-tietokantaan
 | `/hero` | Hahmonluonti: valitse 4 attribuuttia → botti ehdottaa 3 hahmoa → valitse yksi. Sama hahmo ei voi olla kahdella pelaajalla. |
 | `/npc` | Generoi uuden NPC:n (ei toista olemassaolevia) |
 | `/scene` | Generoi seuraavan tilanteen — ottaa huomioon aiemmat sceneet, hahmot ja NPC:t |
+| `/roll` | Noppa: pelkkä `/roll` = d20, `/roll Сила` = d20 + bonus jos attribuutti on valittu, `/roll Сила 15` lisää vaikeusasteen, `/roll 2d6` = vapaa heitto |
 | `/status` | Näyttää maailman, hahmot ja NPC:t |
 | `/delete_hero` | Poistaa oman hahmon |
 | `/reset` | Nollaa koko kampanjan tässä chatissa |

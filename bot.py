@@ -13,7 +13,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import ai
 import db
-from config import ATTRIBUTES, ATTRIBUTES_TO_PICK, BOT_TOKEN
+import dice
+from config import ATTRIBUTE_BONUS, ATTRIBUTES, ATTRIBUTES_TO_PICK, BOT_TOKEN
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,6 +33,11 @@ HELP = (
     "2. /hero — создать своего персонажа (выбери 4 атрибута, получи 3 варианта)\n"
     "3. /npc — сгенерировать нового NPC\n"
     "4. /scene — сгенерировать следующую сцену приключения\n\n"
+    "🎲 <b>Броски кубика:</b>\n"
+    "/roll — простой d20\n"
+    "/roll Сила — d20 с бонусом, если атрибут выбран у твоего персонажа\n"
+    "/roll Сила 15 — то же, но со сложностью проверки (успех/провал)\n"
+    "/roll 2d6 — произвольный бросок\n\n"
     "Прочее:\n"
     "/status — мир, персонажи и NPC\n"
     "/delete_hero — удалить своего персонажа\n"
@@ -233,6 +239,74 @@ async def cmd_scene(message: Message) -> None:
     )
     number = db.save_situation(chat_id, text)
     await note.edit_text(f"📜 <b>Сцена {number}</b>\n\n{text}")
+
+
+@dp.message(Command("roll"))
+async def cmd_roll(message: Message, command: CommandObject) -> None:
+    args = (command.args or "").split()
+    who = message.from_user.first_name
+
+    # /roll 2d6 — произвольный бросок без атрибутов
+    if args:
+        notation = dice.parse_notation(args[0])
+        if notation is not None:
+            count, sides = notation
+            results = dice.roll(count, sides)
+            total = sum(results)
+            detail = f" ({' + '.join(map(str, results))})" if count > 1 else ""
+            await message.answer(f"🎲 {who} бросает {count}d{sides}: <b>{total}</b>{detail}")
+            return
+
+    # /roll — простой d20
+    if not args:
+        value, _ = dice.d20_check(0)
+        await message.answer(f"🎲 {who} бросает d20: <b>{value}</b>")
+        return
+
+    character = db.get_character(message.chat.id, message.from_user.id)
+    if character is None:
+        await message.answer(
+            "У тебя ещё нет персонажа — проверки атрибутов недоступны. Создай его: /hero\n"
+            "Простой бросок работает и так: /roll"
+        )
+        return
+
+    attribute = dice.match_attribute(args[0], ATTRIBUTES)
+    if attribute is None:
+        await message.answer(
+            "Не знаю такого атрибута. Доступные: " + ", ".join(ATTRIBUTES)
+        )
+        return
+
+    difficulty: int | None = None
+    if len(args) > 1:
+        try:
+            difficulty = int(args[1])
+        except ValueError:
+            await message.answer("Сложность должна быть числом, например: /roll Сила 15")
+            return
+
+    own_attributes = [a.strip() for a in character["attributes"].split(",")]
+    has_attribute = attribute in own_attributes
+    bonus = ATTRIBUTE_BONUS if has_attribute else 0
+    value, total = dice.d20_check(bonus)
+
+    bonus_text = f" + {bonus} ({attribute})" if bonus else f" (без бонуса: {attribute} не выбран)"
+    lines = [
+        f"🎲 <b>{character['name']}</b> — проверка: {attribute}",
+        f"d20: {value}{bonus_text} = <b>{total}</b>",
+    ]
+    if value == 20:
+        lines.append("💥 Критический успех!")
+    elif value == 1:
+        lines.append("💀 Критический провал!")
+    if difficulty is not None:
+        lines.append(
+            f"✅ Успех (сложность {difficulty})"
+            if total >= difficulty
+            else f"❌ Провал (сложность {difficulty})"
+        )
+    await message.answer("\n".join(lines))
 
 
 @dp.message(Command("status"))

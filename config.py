@@ -22,3 +22,6 @@ ATTRIBUTES = [
 ]
 
 ATTRIBUTES_TO_PICK = 4
+
+# Бонус к d20 за атрибут, выбранный при создании персонажа
+ATTRIBUTE_BONUS = 3

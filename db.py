@@ -1,10 +1,21 @@
-"""SQLite-хранилище: мир, персонажи, NPC и сцены. Одна игра = один чат Telegram."""
+"""SQLite-хранилище: мир, персонажи, NPC, сцены и действия игроков.
+Одна игра = один чат Telegram."""
 
 import sqlite3
 
-from config import DB_PATH
+from config import DB_PATH, DEFAULT_HP
 
 _conn: sqlite3.Connection | None = None
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    """Добавляет колонки, появившиеся после первой версии, не теряя данные."""
+    existing = {row["name"] for row in c.execute("PRAGMA table_info(characters)")}
+    if "max_hp" not in existing:
+        c.execute(f"ALTER TABLE characters ADD COLUMN max_hp INTEGER NOT NULL DEFAULT {DEFAULT_HP}")
+    if "hp" not in existing:
+        c.execute(f"ALTER TABLE characters ADD COLUMN hp INTEGER NOT NULL DEFAULT {DEFAULT_HP}")
+    c.commit()
 
 
 def conn() -> sqlite3.Connection:
@@ -13,7 +24,7 @@ def conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(DB_PATH)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS games (
                 chat_id INTEGER PRIMARY KEY,
                 theme TEXT NOT NULL,
@@ -27,6 +38,8 @@ def conn() -> sqlite3.Connection:
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 attributes TEXT NOT NULL,
+                hp INTEGER NOT NULL DEFAULT {DEFAULT_HP},
+                max_hp INTEGER NOT NULL DEFAULT {DEFAULT_HP},
                 UNIQUE (chat_id, user_id),
                 UNIQUE (chat_id, name)
             );
@@ -42,8 +55,16 @@ def conn() -> sqlite3.Connection:
                 number INTEGER NOT NULL,
                 text TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                after_situation INTEGER NOT NULL,
+                character_name TEXT NOT NULL,
+                text TEXT NOT NULL
+            );
             """
         )
+        _migrate(_conn)
     return _conn
 
 
@@ -134,8 +155,49 @@ def list_situations(chat_id: int, limit: int = 10) -> list[sqlite3.Row]:
     return list(reversed(rows))
 
 
+def current_situation_number(chat_id: int) -> int:
+    """Номер последней сгенерированной сцены, 0 — если сцен ещё не было."""
+    row = conn().execute(
+        "SELECT COALESCE(MAX(number), 0) AS n FROM situations WHERE chat_id = ?", (chat_id,)
+    ).fetchone()
+    return row["n"]
+
+
+def save_action(chat_id: int, character_name: str, text: str) -> None:
+    """Записывает действие игрока, привязанное к текущей сцене."""
+    c = conn()
+    c.execute(
+        "INSERT INTO actions (chat_id, after_situation, character_name, text) VALUES (?, ?, ?, ?)",
+        (chat_id, current_situation_number(chat_id), character_name, text),
+    )
+    c.commit()
+
+
+def pending_actions(chat_id: int) -> list[sqlite3.Row]:
+    """Действия, заявленные после последней сцены и ещё не отыгранные."""
+    return conn().execute(
+        "SELECT * FROM actions WHERE chat_id = ? AND after_situation = ? ORDER BY id",
+        (chat_id, current_situation_number(chat_id)),
+    ).fetchall()
+
+
+def adjust_hp(chat_id: int, user_id: int, delta: int) -> sqlite3.Row | None:
+    """Меняет здоровье на delta, ограничивая диапазоном 0..max_hp."""
+    character = get_character(chat_id, user_id)
+    if character is None:
+        return None
+    new_hp = max(0, min(character["max_hp"], character["hp"] + delta))
+    c = conn()
+    c.execute(
+        "UPDATE characters SET hp = ? WHERE chat_id = ? AND user_id = ?",
+        (new_hp, chat_id, user_id),
+    )
+    c.commit()
+    return get_character(chat_id, user_id)
+
+
 def reset_game(chat_id: int) -> None:
     c = conn()
-    for table in ("games", "characters", "npcs", "situations"):
+    for table in ("games", "characters", "npcs", "situations", "actions"):
         c.execute(f"DELETE FROM {table} WHERE chat_id = ?", (chat_id,))
     c.commit()

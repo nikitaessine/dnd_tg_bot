@@ -33,6 +33,14 @@ HELP = (
     "2. /hero — создать своего персонажа (выбери 4 атрибута, получи 3 варианта)\n"
     "3. /npc — сгенерировать нового NPC\n"
     "4. /scene — сгенерировать следующую сцену приключения\n\n"
+    "🗣 <b>Действия игроков:</b>\n"
+    "/do &lt;что делает твой герой&gt; — заяви действие после сцены.\n"
+    "Следующая /scene будет прямым следствием всех заявленных действий.\n"
+    "/actions — показать, что уже заявлено\n\n"
+    "❤️ <b>Здоровье:</b>\n"
+    "/hp — здоровье всего отряда\n"
+    "/damage 5 — получить 5 урона\n"
+    "/heal 3 — восстановить 3 здоровья\n\n"
     "🎲 <b>Броски кубика:</b>\n"
     "/roll — простой d20\n"
     "/roll Сила — d20 с бонусом, если атрибут выбран у твоего персонажа\n"
@@ -220,6 +228,110 @@ async def cmd_npc(message: Message) -> None:
     await note.edit_text(f"🧙 <b>Новый NPC</b>\n\n{text}")
 
 
+def hp_line(character) -> str:
+    """'Гарен: 14/20 ❤️' — строка состояния персонажа."""
+    hp, max_hp = character["hp"], character["max_hp"]
+    if hp == 0:
+        state = "💀 без сознания"
+    elif hp <= max_hp // 3:
+        state = "🩸 тяжело ранен"
+    elif hp < max_hp:
+        state = "🤕 ранен"
+    else:
+        state = "❤️ здоров"
+    return f"<b>{character['name']}</b>: {hp}/{max_hp} — {state}"
+
+
+@dp.message(Command("do"))
+async def cmd_do(message: Message, command: CommandObject) -> None:
+    text = (command.args or "").strip()
+    if not text:
+        await message.answer(
+            "Опиши, что делает твой герой. Например:\n"
+            "/do крадусь вдоль стены к двери и слушаю, что за ней"
+        )
+        return
+    character = db.get_character(message.chat.id, message.from_user.id)
+    if character is None:
+        await message.answer("Сначала создай персонажа: /hero")
+        return
+    if db.current_situation_number(message.chat.id) == 0:
+        await message.answer("Сначала начните приключение: /scene")
+        return
+    db.save_action(message.chat.id, character["name"], text)
+    pending = db.pending_actions(message.chat.id)
+    await message.answer(
+        f"🗣 <b>{character['name']}</b>: {text}\n\n"
+        f"Заявлено действий: {len(pending)}. Когда все готовы — /scene"
+    )
+
+
+@dp.message(Command("actions"))
+async def cmd_actions(message: Message) -> None:
+    pending = db.pending_actions(message.chat.id)
+    if not pending:
+        await message.answer("Пока никто не заявил действий. Используй /do <действие>")
+        return
+    lines = ["🗣 <b>Заявленные действия:</b>", ""]
+    lines += [f"• <b>{a['character_name']}</b>: {a['text']}" for a in pending]
+    lines += ["", "Когда все готовы — /scene"]
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("hp"))
+async def cmd_hp(message: Message) -> None:
+    characters = db.list_characters(message.chat.id)
+    if not characters:
+        await message.answer("В этой кампании ещё нет персонажей. Создай своего: /hero")
+        return
+    lines = ["❤️ <b>Состояние отряда:</b>", ""]
+    lines += [f"• {hp_line(c)}" for c in characters]
+    await message.answer("\n".join(lines))
+
+
+async def _change_hp(message: Message, command: CommandObject, sign: int) -> None:
+    raw = (command.args or "").strip()
+    verb = "урона" if sign < 0 else "здоровья"
+    if not raw:
+        await message.answer(f"Укажи количество: /{'damage' if sign < 0 else 'heal'} 5")
+        return
+    try:
+        amount = int(raw.split()[0])
+    except ValueError:
+        await message.answer(f"Количество {verb} должно быть числом.")
+        return
+    if amount <= 0:
+        await message.answer("Число должно быть больше нуля.")
+        return
+    character = db.get_character(message.chat.id, message.from_user.id)
+    if character is None:
+        await message.answer("Сначала создай персонажа: /hero")
+        return
+    before = character["hp"]
+    updated = db.adjust_hp(message.chat.id, message.from_user.id, sign * amount)
+    actual = abs(updated["hp"] - before)
+    if sign < 0:
+        header = f"⚔️ <b>{updated['name']}</b> получает {actual} урона"
+    else:
+        header = f"✨ <b>{updated['name']}</b> восстанавливает {actual} здоровья"
+    lines = [header, hp_line(updated)]
+    if updated["hp"] == 0:
+        lines.append("\n💀 Персонаж без сознания и не может действовать. Нужна помощь!")
+    elif before == 0 and updated["hp"] > 0:
+        lines.append("\n🌅 Персонаж приходит в себя!")
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("damage"))
+async def cmd_damage(message: Message, command: CommandObject) -> None:
+    await _change_hp(message, command, -1)
+
+
+@dp.message(Command("heal"))
+async def cmd_heal(message: Message, command: CommandObject) -> None:
+    await _change_hp(message, command, 1)
+
+
 @dp.message(Command("scene"))
 async def cmd_scene(message: Message) -> None:
     world = db.get_world(message.chat.id)
@@ -229,13 +341,15 @@ async def cmd_scene(message: Message) -> None:
     note = await message.answer("📜 Генерирую следующую сцену…")
     chat_id = message.chat.id
     characters = [
-        f"{c['name']} ({c['description']}) — играет {c['user_name']}"
+        f"{c['name']} ({c['description']}) — играет {c['user_name']}, "
+        f"здоровье {c['hp']}/{c['max_hp']}"
         for c in db.list_characters(chat_id)
     ]
     npcs = [n["description"] for n in db.list_npcs(chat_id)]
     previous = [s["text"] for s in db.list_situations(chat_id, limit=10)]
+    actions = [f"{a['character_name']}: {a['text']}" for a in db.pending_actions(chat_id)]
     text = await ai.generate_situation(
-        world["theme"], world["world_desc"], characters, npcs, previous
+        world["theme"], world["world_desc"], characters, npcs, previous, actions
     )
     number = db.save_situation(chat_id, text)
     await note.edit_text(f"📜 <b>Сцена {number}</b>\n\n{text}")
@@ -320,7 +434,8 @@ async def cmd_status(message: Message) -> None:
     lines.append("⚔️ <b>Персонажи:</b>")
     if characters:
         for c in characters:
-            lines.append(f"• <b>{c['name']}</b> ({c['user_name']}) — {c['attributes']}")
+            lines.append(f"• {hp_line(c)} — {c['user_name']}")
+            lines.append(f"  <i>{c['attributes']}</i>")
     else:
         lines.append("• пока нет")
     npcs = db.list_npcs(message.chat.id)
@@ -331,10 +446,13 @@ async def cmd_status(message: Message) -> None:
             lines.append(f"• {n['name']}")
     else:
         lines.append("• пока нет")
-    situations = db.list_situations(message.chat.id, limit=1)
-    if situations:
+    scene_number = db.current_situation_number(message.chat.id)
+    if scene_number:
         lines.append("")
-        lines.append(f"📜 Сыграно сцен: {situations[-1]['number']}")
+        lines.append(f"📜 Сыграно сцен: {scene_number}")
+    pending = db.pending_actions(message.chat.id)
+    if pending:
+        lines.append(f"🗣 Заявлено действий к следующей сцене: {len(pending)}")
     await message.answer("\n".join(lines))
 
 

@@ -11,7 +11,11 @@ hahmovaihtoehdot, NPC:t ja sceneet. Pelitila tallentuu SQLite-tietokantaan
 | `/world <teema>` | Luo pelimaailman annetusta teemasta |
 | `/hero` | Hahmonluonti: valitse 4 attribuuttia → botti ehdottaa 3 hahmoa → valitse yksi. Sama hahmo ei voi olla kahdella pelaajalla. |
 | `/npc` | Generoi uuden NPC:n (ei toista olemassaolevia) |
-| `/scene` | Generoi seuraavan tilanteen — ottaa huomioon aiemmat sceneet, hahmot ja NPC:t |
+| `/scene` | Generoi seuraavan tilanteen — ottaa huomioon aiemmat sceneet, hahmot, NPC:t, pelaajien toimet ja hahmojen HP:n |
+| `/do <teksti>` | Pelaaja ilmoittaa mitä hahmo tekee. Seuraava `/scene` on suora seuraus näistä. |
+| `/actions` | Näyttää mitä on jo ilmoitettu ennen seuraavaa sceneä |
+| `/hp` | Koko porukan terveystilanne |
+| `/damage 5` / `/heal 3` | Vahinko ja parannus omalle hahmolle (rajattu välille 0…max) |
 | `/roll` | Noppa: pelkkä `/roll` = d20, `/roll Сила` = d20 + bonus jos attribuutti on valittu, `/roll Сила 15` lisää vaikeusasteen, `/roll 2d6` = vapaa heitto |
 | `/status` | Näyttää maailman, hahmot ja NPC:t |
 | `/delete_hero` | Poistaa oman hahmon |

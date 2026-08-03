@@ -7,7 +7,8 @@ APP_DIR=/opt/dnd_tg_bot
 cd "$APP_DIR"
 
 echo "→ Haetaan muutokset..."
-git pull
+git fetch origin main
+git reset --hard origin/main
 
 echo "→ Päivitetään riippuvuudet..."
 ./venv/bin/pip install -q -r requirements.txt

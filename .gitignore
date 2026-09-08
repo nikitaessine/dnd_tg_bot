@@ -1,5 +1,9 @@
 .env
 game.db
+game.db-wal
+game.db-shm
+backups/
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/

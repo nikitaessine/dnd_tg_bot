@@ -102,11 +102,25 @@ sudo systemctl restart dnd-bot     # uudelleenkäynnistys
 sudo systemctl stop dnd-bot        # pysäytys
 ```
 
-**Koodin päivitys**: lataa muuttuneet tiedostot, siirrä ne `/opt/dnd_tg_bot/`-kansioon,
-ja aja `sudo systemctl restart dnd-bot`.
+**Koodin päivitys** (Git-työnkulku): työnnä muutokset GitHubiin omalta koneelta ja aja
+palvelimella `sudo /opt/dnd_tg_bot/deploy/update.sh`. Skripti hakee koodin, päivittää
+riippuvuudet, korjaa oikeudet ja käynnistää botin uudelleen.
 
-**Pelitilan varmuuskopiointi**: kaikki on tiedostossa `/opt/dnd_tg_bot/game.db`.
-Kopioi se talteen tarvittaessa.
+**Varmuuskopiot**: pelitila on tiedostossa `/opt/dnd_tg_bot/game.db`. Kaksi tapaa:
+
+- Telegramissa GM ajaa `/backup` — botti lähettää kopion yksityisviestinä.
+- Automaattinen päivittäinen kopio kansioon `/opt/dnd_tg_bot/backups/` (14 viimeisintä
+  säilytetään). Lisää cron-ajo kerran:
+
+  ```bash
+  sudo chmod +x /opt/dnd_tg_bot/deploy/backup.sh && (sudo crontab -l 2>/dev/null; echo "0 4 * * * /opt/dnd_tg_bot/deploy/backup.sh") | sudo crontab -
+  ```
+
+Palautus: pysäytä botti, kopioi haluttu tiedosto nimelle `/opt/dnd_tg_bot/game.db`,
+aja `sudo chown dndbot:dndbot /opt/dnd_tg_bot/game.db` ja käynnistä botti.
+
+Huom: tietokanta käyttää WAL-tilaa, joten kansiossa on myös `game.db-wal` ja `game.db-shm`.
+Älä kopioi pelkkää `game.db`-tiedostoa käsin kesken ajon — käytä yllä olevia tapoja.
 
 ---
 

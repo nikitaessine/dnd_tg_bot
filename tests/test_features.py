@@ -588,6 +588,12 @@ def test_migration_from_first_version_database(tmp_path):
     # повторное открытие не пересчитывает опыт второй раз
     db._conn = None
     assert db.get_character(1, 10)["xp"] == 320
+    # в старой базе attributes обязателен: новый герой всё равно должен сохраняться
+    import creation
+    data = {"race": "Эльф", "subrace": "Высший эльф", "cls": "Воин", "bg": "Солдат",
+            "values": [15, 14, 13, 12, 10, 8], "skills": ["Атлетика", "Запугивание"], "style": "Защита"}
+    assert creation.create(1, 11, "M", "Новый", "герой", data) is True
+    assert creation.create(1, 12, "K", "Новый", "занято", data) is False   # имя занято — честный отказ
 
 
 def test_legacy_hero_can_fight_and_cast_checks(monkeypatch):

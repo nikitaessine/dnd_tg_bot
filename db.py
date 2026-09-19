@@ -315,6 +315,8 @@ def save_character(chat_id: int, user_id: int, user_name: str, name: str, descri
                    **fields) -> bool:
     """True = сохранено, False = имя уже занято или у игрока уже есть персонаж.
     Остальные поля (race, char_class, stats, hp, …) — именованными аргументами."""
+    # В базах, созданных старой версией, столбец attributes обязателен и без значения по умолчанию
+    fields.setdefault("attributes", "")
     columns = ["chat_id", "user_id", "user_name", "name", "description"] + list(fields)
     values = [chat_id, user_id, user_name, name, description] + [_encode(v) for v in fields.values()]
     c = conn()
@@ -325,7 +327,9 @@ def save_character(chat_id: int, user_id: int, user_name: str, name: str, descri
         )
         c.commit()
         return True
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" not in str(e):
+            raise  # не «имя занято», а настоящая ошибка — пусть попадёт в журнал
         return False
 
 

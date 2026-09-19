@@ -163,14 +163,14 @@ async def cmd_reset(message: Message) -> None:
     if game is not None and not await require_gm(message, game):
         return
     db.reset_game(message.chat.id)
-    await message.answer("♻️ Кампания сброшена. Начните заново: /world <тема>")
+    await message.answer("♻️ Кампания сброшена. Начните заново: /world &lt;тема&gt;")
 
 
 @router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
     game = db.get_world(message.chat.id)
     if game is None:
-        await message.answer("Кампания ещё не начата. Создайте мир: /world <тема>")
+        await message.answer("Кампания ещё не начата. Создайте мир: /world &lt;тема&gt;")
         return
     chat_id = message.chat.id
     lines = [f"🌍 <b>Мир:</b> {esc(game['theme'])}"]

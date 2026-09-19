@@ -288,7 +288,7 @@ async def cmd_actions(message: Message) -> None:
     actions = [a for a in pending if a["kind"] == "action"]
     events = [a for a in pending if a["kind"] == "event"]
     if not actions and not events:
-        await message.answer("После последней сцены ничего не заявлено. Используй /do <действие>")
+        await message.answer("После последней сцены ничего не заявлено. Используй /do &lt;действие&gt;")
         return
     lines = []
     if actions:

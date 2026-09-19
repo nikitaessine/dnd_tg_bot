@@ -34,13 +34,31 @@ def split_text(text: str, limit: int = TELEGRAM_MAX_LEN) -> list[str]:
     return chunks
 
 
+def _plain(text: str) -> str:
+    """Текст без HTML-разметки — запасной вариант, если Telegram не смог её разобрать."""
+    import html
+    import re
+    return html.unescape(re.sub(r"</?(b|i|u|s|pre|code)>", "", text))
+
+
+async def _send(send, text: str, **kwargs):
+    """Отправка/редактирование с запасным вариантом без разметки при ошибке разбора HTML."""
+    try:
+        return await send(text, **kwargs)
+    except TelegramBadRequest as e:
+        if "parse entities" not in str(e):
+            raise
+        logging.warning("HTML parse failed, sending plain text: %s", e)
+        return await send(_plain(text), parse_mode=None, **kwargs)
+
+
 async def answer_long(
     message: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None
 ) -> None:
     chunks = split_text(text)
     for chunk in chunks[:-1]:
-        await message.answer(chunk)
-    await message.answer(chunks[-1], reply_markup=reply_markup)
+        await _send(message.answer, chunk)
+    await _send(message.answer, chunks[-1], reply_markup=reply_markup)
 
 
 async def edit_long(
@@ -48,11 +66,11 @@ async def edit_long(
 ) -> None:
     """Первая часть заменяет сообщение-заглушку, остальные идут следом."""
     chunks = split_text(text)
-    await note.edit_text(chunks[0], reply_markup=reply_markup if len(chunks) == 1 else None)
+    await _send(note.edit_text, chunks[0], reply_markup=reply_markup if len(chunks) == 1 else None)
     for chunk in chunks[1:-1]:
-        await note.answer(chunk)
+        await _send(note.answer, chunk)
     if len(chunks) > 1:
-        await note.answer(chunks[-1], reply_markup=reply_markup)
+        await _send(note.answer, chunks[-1], reply_markup=reply_markup)
 
 
 async def try_delete(message: Message) -> bool:
@@ -118,7 +136,7 @@ def is_gm(message: Message, game: sqlite3.Row | None) -> bool:
 async def require_world(message: Message) -> sqlite3.Row | None:
     game = db.get_world(message.chat.id)
     if game is None:
-        await message.answer("Сначала создайте мир: /world <тема>")
+        await message.answer("Сначала создайте мир: /world &lt;тема&gt;")
     return game
 
 

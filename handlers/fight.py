@@ -95,7 +95,7 @@ async def cmd_enemy(message: Message, command: CommandObject) -> None:
 async def cmd_enemies(message: Message) -> None:
     enemies = db.list_enemies(message.chat.id)
     if not enemies:
-        await message.answer("Противников нет. Мастер: /enemy <описание>")
+        await message.answer("Противников нет. Мастер: /enemy &lt;описание&gt;")
         return
     lines = ["👹 <b>Противники</b>"]
     for e in enemies:
@@ -116,7 +116,7 @@ async def cmd_fight(message: Message) -> None:
         await message.answer("Бой уже идёт. Порядок ходов: /order")
         return
     if not db.list_enemies(chat_id):
-        await message.answer("Нет противников. Сначала: /enemy <описание>")
+        await message.answer("Нет противников. Сначала: /enemy &lt;описание&gt;")
         return
     if not db.list_characters(chat_id, alive_only=True):
         await message.answer("В отряде нет героев: /hero")
@@ -236,7 +236,7 @@ async def cb_action(callback: CallbackQuery) -> None:
         return
     if key == "spells":
         from handlers.magic import spells_lines
-        await message.answer("\n".join(spells_lines(character)) + "\n\nКолдовать: /cast <название> [ячейка] [цель]")
+        await message.answer("\n".join(spells_lines(character)) + "\n\nКолдовать: /cast &lt;название&gt; [ячейка] [цель]")
         return
     actions = {
         "dodge": lambda: features.dodge(chat_id, character),

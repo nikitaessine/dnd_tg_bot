@@ -9,12 +9,15 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import ai
 import db
 import dice
+import engine
 import rules
-from config import ATTRIBUTES, RECENT_SCENES, SCENE_COOLDOWN, SUMMARY_BATCH
+import srd
+from config import RECENT_SCENES, SCENE_COOLDOWN, SUMMARY_BATCH
 from handlers.common import (
     answer_long,
     chat_lock,
     edit_long,
+    conditions_text,
     esc,
     generate,
     require_character,
@@ -56,12 +59,19 @@ async def _post_in_character(message: Message, text: str) -> None:
 def _character_summaries(chat_id: int) -> list[str]:
     result = []
     for c in db.list_characters(chat_id):
-        state = f"{c['level']} ур., {c['hp']}/{c['max_hp']} HP"
         if not c["alive"]:
             state = "ПОГИБ"
-        elif c["hp"] == 0:
-            state += ", без сознания"
-        result.append(f"{c['name']} ({c['description']}) — {state}; играет {c['user_name']}")
+        else:
+            g = engine.gear(chat_id, c)
+            state = f"{c['level']} ур., {c['hp']}/{c['max_hp']} HP, КД {g['ac']}"
+            if c["hp"] == 0:
+                state += ", без сознания"
+            extra = conditions_text(c)
+            if extra:
+                state += f", {extra}"
+        sub = rules.subrace_of(c)
+        kind = f"{sub or rules.race_of(c)} {rules.class_of(c)}".strip()
+        result.append(f"{c['name']} ({kind}; {c['description']}) — {state}; играет {c['user_name']}")
     return result
 
 
@@ -84,20 +94,27 @@ async def _maybe_summarize(note: Message, game) -> None:
         db.update_game(chat_id, summary=summary, summary_upto=unsummarized_end)
 
 
+CHECK_NAMES = list(srd.SKILLS) + list(srd.ABILITIES)
+
+
 def _check_buttons(chat_id: int, checks) -> tuple[list[str], InlineKeyboardMarkup | None]:
-    """Кнопки для проверок, запрошенных мастером. Пропускает несуществующих персонажей."""
+    """Кнопки для проверок и спасбросков, запрошенных мастером. Пропускает несуществующих персонажей."""
     lines, rows = [], []
     for check in checks[:3]:
         character = db.find_character(chat_id, check.character)
-        attribute = dice.match_attribute(check.attribute, ATTRIBUTES)
-        if character is None or attribute is None or not character["alive"] or character["hp"] == 0:
+        is_save = check.kind.strip().casefold().startswith(("save", "спас"))
+        pool = srd.ABILITIES if is_save else CHECK_NAMES
+        name = dice.match_name(check.attribute, pool)
+        if character is None or name is None or not character["alive"] or character["hp"] == 0:
             continue
         difficulty = max(5, min(30, check.difficulty))
-        lines.append(f"• <b>{esc(character['name'])}</b> — {attribute} (сложность {difficulty}): {esc(check.reason)}")
+        label = f"спасбросок {name}" if is_save else name
+        lines.append(f"• <b>{esc(character['name'])}</b> — {label} (сложность {difficulty}): {esc(check.reason)}")
+        code = f"{'s' if is_save else 'c'}{pool.index(name)}"
         rows.append([
             InlineKeyboardButton(
-                text=f"🎲 {character['name']}: {attribute} (сл. {difficulty})"[:60],
-                callback_data=f"check:{character['user_id']}:{ATTRIBUTES.index(attribute)}:{difficulty}",
+                text=f"🎲 {character['name']}: {label} (сл. {difficulty})"[:60],
+                callback_data=f"check:{character['user_id']}:{code}:{difficulty}",
             )
         ])
     if not rows:
@@ -179,8 +196,8 @@ def _without_button(markup: InlineKeyboardMarkup | None, data: str) -> InlineKey
 
 @router.callback_query(F.data.startswith("check:"))
 async def cb_check(callback: CallbackQuery) -> None:
-    _, uid, idx, dc = callback.data.split(":")
-    user_id, attribute, difficulty = int(uid), ATTRIBUTES[int(idx)], int(dc)
+    _, uid, code, dc = callback.data.split(":")
+    user_id, difficulty = int(uid), int(dc)
     if callback.from_user.id != user_id:
         await callback.answer("Эту проверку делает другой игрок 🙂")
         return
@@ -189,30 +206,21 @@ async def cb_check(callback: CallbackQuery) -> None:
     if character is None or not character["alive"] or character["hp"] == 0:
         await callback.answer("Твой персонаж сейчас не может действовать.")
         return
-    bonus, proficient = rules.check_bonus(character, attribute)
-    value, total = dice.d20_check(bonus)
-    success = value == 20 or (value != 1 and total >= difficulty)
-    outcome = "успех" if success else "провал"
-    lines = [
-        f"🎲 <b>{esc(character['name'])}</b> — проверка: {attribute} (сложность {difficulty})",
-        f"d20: {value} {rules.format_modifier(bonus)}"
-        + (" (мастерство)" if proficient else "") + f" = <b>{total}</b>",
-    ]
-    if value == 20:
-        lines.append("💥 Критический успех!")
-    elif value == 1:
-        lines.append("💀 Критический провал!")
-    lines.append("✅ Успех" if success else "❌ Провал")
-    db.save_action(
-        chat_id, character["name"],
-        f"проверка {attribute} по запросу мастера (сложность {difficulty}): {total} — {outcome}",
-        kind="event",
-    )
+    if code[0] == "s":
+        ability = srd.ABILITIES[int(code[1:])]
+        result = engine.pc_save(chat_id, character, ability, difficulty)
+        text = f"🎲 <b>{esc(character['name'])}</b> — спасбросок {ability}\n{result['text']}"
+        outcome = "успех" if result["success"] else "провал"
+        event = f"спасбросок {ability} по запросу мастера (сложность {difficulty}): {outcome}"
+    else:
+        result = engine.check_roll(chat_id, character, CHECK_NAMES[int(code[1:])], difficulty)
+        text, event = "\n".join(result["lines"]), result["event"]
+    db.save_action(chat_id, character["name"], event, kind="event")
     await callback.answer()
     await callback.message.edit_reply_markup(
         reply_markup=_without_button(callback.message.reply_markup, callback.data)
     )
-    await callback.message.answer("\n".join(lines))
+    await callback.message.answer(text)
 
 
 @router.message(Command("do"))

@@ -8,9 +8,11 @@ import json
 import sqlite3
 import time
 
-from config import DB_PATH, DEFAULT_DIFFICULTY, DEFAULT_HP
+import srd
+from config import DB_PATH, DEFAULT_DIFFICULTY
 
 _conn: sqlite3.Connection | None = None
+SCHEMA_VERSION = 3  # 2: опыт хранится суммарно (таблица правил); 3: правила Basic Rules
 
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS games (
@@ -31,15 +33,38 @@ CREATE TABLE IF NOT EXISTS characters (
     user_name TEXT NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
-    attributes TEXT NOT NULL,
-    hp INTEGER NOT NULL DEFAULT {DEFAULT_HP},
-    max_hp INTEGER NOT NULL DEFAULT {DEFAULT_HP},
+    attributes TEXT NOT NULL DEFAULT '',
+    hp INTEGER NOT NULL DEFAULT 10,
+    max_hp INTEGER NOT NULL DEFAULT 10,
     stats TEXT,
     level INTEGER NOT NULL DEFAULT 1,
     xp INTEGER NOT NULL DEFAULT 0,
     alive INTEGER NOT NULL DEFAULT 1,
     death_successes INTEGER NOT NULL DEFAULT 0,
     death_failures INTEGER NOT NULL DEFAULT 0,
+    race TEXT NOT NULL DEFAULT '',
+    subrace TEXT NOT NULL DEFAULT '',
+    char_class TEXT NOT NULL DEFAULT '',
+    background TEXT NOT NULL DEFAULT '',
+    skills TEXT NOT NULL DEFAULT '[]',
+    expertise TEXT NOT NULL DEFAULT '[]',
+    fighting_style TEXT NOT NULL DEFAULT '',
+    temp_hp INTEGER NOT NULL DEFAULT 0,
+    exhaustion INTEGER NOT NULL DEFAULT 0,
+    inspiration INTEGER NOT NULL DEFAULT 0,
+    hit_dice_used INTEGER NOT NULL DEFAULT 0,
+    slots_used TEXT NOT NULL DEFAULT '{{}}',
+    cantrips TEXT NOT NULL DEFAULT '[]',
+    spellbook TEXT NOT NULL DEFAULT '[]',
+    prepared TEXT NOT NULL DEFAULT '[]',
+    uses TEXT NOT NULL DEFAULT '{{}}',
+    conditions TEXT NOT NULL DEFAULT '[]',
+    concentration TEXT NOT NULL DEFAULT '',
+    asi_pending INTEGER NOT NULL DEFAULT 0,
+    learn_pending INTEGER NOT NULL DEFAULT 0,
+    cantrip_pending INTEGER NOT NULL DEFAULT 0,
+    expertise_pending INTEGER NOT NULL DEFAULT 0,
+    died_scene INTEGER NOT NULL DEFAULT 0,
     UNIQUE (chat_id, user_id),
     UNIQUE (chat_id, name)
 );
@@ -81,7 +106,16 @@ CREATE TABLE IF NOT EXISTS enemies (
     damage_dice TEXT NOT NULL,
     initiative_bonus INTEGER NOT NULL DEFAULT 0,
     xp INTEGER NOT NULL DEFAULT 0,
-    alive INTEGER NOT NULL DEFAULT 1
+    alive INTEGER NOT NULL DEFAULT 1,
+    save_bonus INTEGER NOT NULL DEFAULT 1,
+    cr REAL NOT NULL DEFAULT 0.25,
+    conditions TEXT NOT NULL DEFAULT '[]',
+    attacks INTEGER NOT NULL DEFAULT 1,
+    dtype TEXT NOT NULL DEFAULT '',
+    etype TEXT NOT NULL DEFAULT '',
+    effect_condition TEXT NOT NULL DEFAULT '',
+    effect_ability TEXT NOT NULL DEFAULT '',
+    effect_dc INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +130,8 @@ CREATE TABLE IF NOT EXISTS combat (
     chat_id INTEGER PRIMARY KEY,
     round INTEGER NOT NULL,
     turn_index INTEGER NOT NULL,
-    order_json TEXT NOT NULL
+    order_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT '{{}}'
 );
 CREATE TABLE IF NOT EXISTS drafts (
     chat_id INTEGER NOT NULL,
@@ -118,14 +153,37 @@ CREATE TABLE IF NOT EXISTS usage (
 
 # (таблица, колонка, объявление) — колонки, которых нет в базах старых версий
 _MIGRATIONS = [
-    ("characters", "hp", f"INTEGER NOT NULL DEFAULT {DEFAULT_HP}"),
-    ("characters", "max_hp", f"INTEGER NOT NULL DEFAULT {DEFAULT_HP}"),
+    ("characters", "hp", "INTEGER NOT NULL DEFAULT 10"),
+    ("characters", "max_hp", "INTEGER NOT NULL DEFAULT 10"),
     ("characters", "stats", "TEXT"),
     ("characters", "level", "INTEGER NOT NULL DEFAULT 1"),
     ("characters", "xp", "INTEGER NOT NULL DEFAULT 0"),
     ("characters", "alive", "INTEGER NOT NULL DEFAULT 1"),
     ("characters", "death_successes", "INTEGER NOT NULL DEFAULT 0"),
     ("characters", "death_failures", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "race", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "subrace", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "char_class", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "background", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "skills", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "expertise", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "fighting_style", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "temp_hp", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "exhaustion", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "inspiration", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "hit_dice_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "slots_used", "TEXT NOT NULL DEFAULT '{}'"),
+    ("characters", "cantrips", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "spellbook", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "prepared", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "uses", "TEXT NOT NULL DEFAULT '{}'"),
+    ("characters", "conditions", "TEXT NOT NULL DEFAULT '[]'"),
+    ("characters", "concentration", "TEXT NOT NULL DEFAULT ''"),
+    ("characters", "asi_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "learn_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "cantrip_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "expertise_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("characters", "died_scene", "INTEGER NOT NULL DEFAULT 0"),
     ("games", "gm_user_id", "INTEGER"),
     ("games", "tone", "TEXT NOT NULL DEFAULT ''"),
     ("games", "difficulty", f"TEXT NOT NULL DEFAULT '{DEFAULT_DIFFICULTY}'"),
@@ -133,6 +191,16 @@ _MIGRATIONS = [
     ("games", "summary_upto", "INTEGER NOT NULL DEFAULT 0"),
     ("games", "location", "TEXT NOT NULL DEFAULT ''"),
     ("actions", "kind", "TEXT NOT NULL DEFAULT 'action'"),
+    ("enemies", "save_bonus", "INTEGER NOT NULL DEFAULT 1"),
+    ("enemies", "cr", "REAL NOT NULL DEFAULT 0.25"),
+    ("enemies", "conditions", "TEXT NOT NULL DEFAULT '[]'"),
+    ("enemies", "attacks", "INTEGER NOT NULL DEFAULT 1"),
+    ("enemies", "dtype", "TEXT NOT NULL DEFAULT ''"),
+    ("enemies", "etype", "TEXT NOT NULL DEFAULT ''"),
+    ("enemies", "effect_condition", "TEXT NOT NULL DEFAULT ''"),
+    ("enemies", "effect_ability", "TEXT NOT NULL DEFAULT ''"),
+    ("enemies", "effect_dc", "INTEGER NOT NULL DEFAULT 0"),
+    ("combat", "state", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 _ALL_TABLES = (
@@ -146,6 +214,13 @@ def _migrate(c: sqlite3.Connection) -> None:
         existing = {row["name"] for row in c.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+    version = c.execute("PRAGMA user_version").fetchone()[0]
+    if version < 2:
+        # Раньше xp — прогресс внутри уровня; теперь суммарный опыт по таблице правил.
+        for row in c.execute("SELECT id, level, xp FROM characters").fetchall():
+            total = srd.XP_FOR_LEVEL[max(1, min(row["level"], srd.MAX_LEVEL)) - 1] + row["xp"]
+            c.execute("UPDATE characters SET xp = ? WHERE id = ?", (total, row["id"]))
+    c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     c.commit()
 
 
@@ -160,6 +235,13 @@ def conn() -> sqlite3.Connection:
     return _conn
 
 
+def _encode(value):
+    """Списки и словари хранятся как JSON."""
+    if isinstance(value, (list, dict, set, tuple)):
+        return json.dumps(sorted(value) if isinstance(value, set) else value, ensure_ascii=False)
+    return value
+
+
 def _update(table: str, where: dict, fields: dict) -> None:
     if not fields:
         return
@@ -168,7 +250,7 @@ def _update(table: str, where: dict, fields: dict) -> None:
     where_sql = " AND ".join(f"{k} = ?" for k in where)
     c.execute(
         f"UPDATE {table} SET {set_sql} WHERE {where_sql}",
-        (*fields.values(), *where.values()),
+        ([_encode(v) for v in fields.values()] + list(where.values())),
     )
     c.commit()
 
@@ -203,16 +285,16 @@ def get_character(chat_id: int, user_id: int) -> sqlite3.Row | None:
 
 
 def find_character(chat_id: int, query: str) -> sqlite3.Row | None:
-    """Персонаж по началу имени, без учёта регистра."""
-    q = query.strip().casefold()
+    """Персонаж по началу имени, без учёта регистра и «ё»."""
+    q = query.strip().casefold().replace("ё", "е")
     if not q:
         return None
     rows = list_characters(chat_id)
     for row in rows:
-        if row["name"].casefold() == q:
+        if row["name"].casefold().replace("ё", "е") == q:
             return row
     for row in rows:
-        if row["name"].casefold().startswith(q):
+        if row["name"].casefold().replace("ё", "е").startswith(q):
             return row
     return None
 
@@ -229,28 +311,17 @@ def taken_character_names(chat_id: int) -> list[str]:
     return [r["name"] for r in rows]
 
 
-def save_character(
-    chat_id: int,
-    user_id: int,
-    user_name: str,
-    name: str,
-    description: str,
-    attributes: str,
-    stats: dict[str, int] | None = None,
-    max_hp: int = DEFAULT_HP,
-) -> bool:
-    """True = сохранено, False = имя уже занято или у игрока уже есть персонаж."""
+def save_character(chat_id: int, user_id: int, user_name: str, name: str, description: str,
+                   **fields) -> bool:
+    """True = сохранено, False = имя уже занято или у игрока уже есть персонаж.
+    Остальные поля (race, char_class, stats, hp, …) — именованными аргументами."""
+    columns = ["chat_id", "user_id", "user_name", "name", "description"] + list(fields)
+    values = [chat_id, user_id, user_name, name, description] + [_encode(v) for v in fields.values()]
     c = conn()
     try:
         c.execute(
-            "INSERT INTO characters "
-            "(chat_id, user_id, user_name, name, description, attributes, stats, hp, max_hp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                chat_id, user_id, user_name, name, description, attributes,
-                json.dumps(stats, ensure_ascii=False) if stats else None,
-                max_hp, max_hp,
-            ),
+            f"INSERT INTO characters ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+            values,
         )
         c.commit()
         return True
@@ -270,18 +341,6 @@ def delete_character(chat_id: int, user_id: int) -> None:
     c.commit()
 
 
-def adjust_hp(chat_id: int, user_id: int, delta: int) -> sqlite3.Row | None:
-    """Меняет здоровье на delta в пределах 0..max_hp. Выход из 0 сбрасывает спасброски."""
-    character = get_character(chat_id, user_id)
-    if character is None:
-        return None
-    new_hp = max(0, min(character["max_hp"], character["hp"] + delta))
-    fields = {"hp": new_hp}
-    if new_hp > 0:
-        fields.update(death_successes=0, death_failures=0)
-    return update_character(chat_id, user_id, **fields)
-
-
 # ---------------------------------------------------------------- черновики создания героя
 
 def get_draft(chat_id: int, user_id: int) -> dict | None:
@@ -297,7 +356,8 @@ def get_draft(chat_id: int, user_id: int) -> dict | None:
     }
 
 
-def set_draft(chat_id: int, user_id: int, stage: str, selected: list, options: list) -> None:
+def set_draft(chat_id: int, user_id: int, stage: str, selected, options) -> None:
+    """selected — данные шага создания (список или словарь), options — предложенные варианты."""
     c = conn()
     c.execute(
         "INSERT INTO drafts (chat_id, user_id, stage, selected, options) VALUES (?, ?, ?, ?, ?) "
@@ -407,17 +467,30 @@ def list_facts(chat_id: int, limit: int = 30) -> list[sqlite3.Row]:
 
 # ---------------------------------------------------------------- противники
 
+def _unique_enemy_name(chat_id: int, name: str) -> str:
+    """Имена живых противников уникальны: «Гоблин», «Гоблин 2», «Гоблин 3»."""
+    taken = {r["name"] for r in list_enemies(chat_id)}
+    if name not in taken:
+        return name
+    n = 2
+    while f"{name} {n}" in taken:
+        n += 1
+    return f"{name} {n}"
+
+
 def save_enemy(chat_id: int, **fields) -> sqlite3.Row:
+    data = {
+        "description": "", "initiative_bonus": 0, "xp": 0, "save_bonus": 1, "cr": 0.25,
+        "attacks": 1, "dtype": "", "etype": "", "effect_condition": "", "effect_ability": "", "effect_dc": 0,
+    }
+    data.update(fields)
+    data["name"] = _unique_enemy_name(chat_id, data["name"])
+    data["max_hp"] = data["hp"]
+    columns = ["chat_id"] + list(data)
     c = conn()
     cur = c.execute(
-        "INSERT INTO enemies (chat_id, name, description, hp, max_hp, armor_class, "
-        "attack_bonus, damage_dice, initiative_bonus, xp) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            chat_id, fields["name"], fields.get("description", ""), fields["hp"], fields["hp"],
-            fields["armor_class"], fields["attack_bonus"], fields["damage_dice"],
-            fields.get("initiative_bonus", 0), fields.get("xp", 0),
-        ),
+        f"INSERT INTO enemies ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+        [chat_id] + [_encode(v) for v in data.values()],
     )
     c.commit()
     return get_enemy(cur.lastrowid)
@@ -435,15 +508,15 @@ def list_enemies(chat_id: int, alive_only: bool = True) -> list[sqlite3.Row]:
 
 
 def find_enemy(chat_id: int, query: str) -> sqlite3.Row | None:
-    q = query.strip().casefold()
+    q = query.strip().casefold().replace("ё", "е")
     if not q:
         return None
     rows = list_enemies(chat_id)
     for row in rows:
-        if row["name"].casefold() == q:
+        if row["name"].casefold().replace("ё", "е") == q:
             return row
     for row in rows:
-        if row["name"].casefold().startswith(q):
+        if row["name"].casefold().replace("ё", "е").startswith(q):
             return row
     return None
 
@@ -461,11 +534,11 @@ def clear_dead_enemies(chat_id: int) -> None:
 
 # ---------------------------------------------------------------- предметы
 
-def add_item(chat_id: int, user_id: int, name: str, kind: str, value: str = "") -> sqlite3.Row:
+def add_item(chat_id: int, user_id: int, name: str, kind: str, value="") -> sqlite3.Row:
     c = conn()
     cur = c.execute(
         "INSERT INTO items (chat_id, user_id, name, kind, value) VALUES (?, ?, ?, ?, ?)",
-        (chat_id, user_id, name, kind, value),
+        (chat_id, user_id, name, kind, _encode(value) if not isinstance(value, str) else value),
     )
     c.commit()
     return conn().execute("SELECT * FROM items WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -479,15 +552,15 @@ def list_items(chat_id: int, user_id: int) -> list[sqlite3.Row]:
 
 
 def find_item(chat_id: int, user_id: int, query: str) -> sqlite3.Row | None:
-    q = query.strip().casefold()
+    q = query.strip().casefold().replace("ё", "е")
     if not q:
         return None
     rows = list_items(chat_id, user_id)
     for row in rows:
-        if row["name"].casefold() == q:
+        if row["name"].casefold().replace("ё", "е") == q:
             return row
     for row in rows:
-        if row["name"].casefold().startswith(q):
+        if row["name"].casefold().replace("ё", "е").startswith(q):
             return row
     return None
 
@@ -509,6 +582,12 @@ def equip_item(chat_id: int, user_id: int, item_id: int, kind: str) -> None:
     c.commit()
 
 
+def unequip_item(item_id: int) -> None:
+    c = conn()
+    c.execute("UPDATE items SET equipped = 0 WHERE id = ?", (item_id,))
+    c.commit()
+
+
 def equipped_item(chat_id: int, user_id: int, kind: str) -> sqlite3.Row | None:
     return conn().execute(
         "SELECT * FROM items WHERE chat_id = ? AND user_id = ? AND kind = ? AND equipped = 1",
@@ -526,17 +605,27 @@ def get_combat(chat_id: int) -> dict | None:
         "round": row["round"],
         "turn_index": row["turn_index"],
         "order": json.loads(row["order_json"]),
+        "state": json.loads(row["state"] or "{}"),
     }
 
 
-def set_combat(chat_id: int, round_: int, turn_index: int, order: list[dict]) -> None:
+def set_combat(chat_id: int, round_: int, turn_index: int, order: list[dict], state: dict | None = None) -> None:
     c = conn()
+    existing = c.execute("SELECT state FROM combat WHERE chat_id = ?", (chat_id,)).fetchone()
+    state_json = json.dumps(state if state is not None else
+                            (json.loads(existing["state"]) if existing else {}), ensure_ascii=False)
     c.execute(
-        "INSERT INTO combat (chat_id, round, turn_index, order_json) VALUES (?, ?, ?, ?) "
+        "INSERT INTO combat (chat_id, round, turn_index, order_json, state) VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(chat_id) DO UPDATE SET round = excluded.round, "
-        "turn_index = excluded.turn_index, order_json = excluded.order_json",
-        (chat_id, round_, turn_index, json.dumps(order, ensure_ascii=False)),
+        "turn_index = excluded.turn_index, order_json = excluded.order_json, state = excluded.state",
+        (chat_id, round_, turn_index, json.dumps(order, ensure_ascii=False), state_json),
     )
+    c.commit()
+
+
+def set_combat_state(chat_id: int, state: dict) -> None:
+    c = conn()
+    c.execute("UPDATE combat SET state = ? WHERE chat_id = ?", (json.dumps(state, ensure_ascii=False), chat_id))
     c.commit()
 
 

@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
-from handlers import fight, hero, setup, story
+from handlers import checks, fight, hero, items, magic, setup, story
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,6 +21,9 @@ COMMANDS = [
     BotCommand(command="party", description="Кто есть кто"),
     BotCommand(command="roll", description="Бросок кубика / проверка"),
     BotCommand(command="attack", description="Атаковать противника"),
+    BotCommand(command="cast", description="Колдовать заклинание"),
+    BotCommand(command="spells", description="Мои заклинания"),
+    BotCommand(command="endturn", description="Закончить ход"),
     BotCommand(command="hp", description="Здоровье отряда"),
     BotCommand(command="sheet", description="Лист персонажа"),
     BotCommand(command="inventory", description="Инвентарь"),
@@ -35,7 +38,9 @@ COMMANDS = [
 async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_routers(setup.router, hero.router, story.router, fight.router)
+    dp.include_routers(
+        setup.router, hero.router, checks.router, items.router, magic.router, fight.router, story.router
+    )
     await bot.set_my_commands(COMMANDS)
     await dp.start_polling(bot)
 

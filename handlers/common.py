@@ -1,7 +1,6 @@
-"""Общее для обработчиков: длинные сообщения, права мастера, обёртка вокруг генерации."""
+"""Общее для обработчиков: длинные сообщения, права мастера, обёртка вокруг генерации, отображение."""
 
 import asyncio
-import html
 import logging
 import sqlite3
 
@@ -11,12 +10,9 @@ from aiogram.types import InlineKeyboardMarkup, Message, ReactionTypeEmoji
 
 import ai
 import db
+import rules
 from config import TELEGRAM_MAX_LEN
-
-
-def esc(text) -> str:
-    """Экранирует текст пользователя или модели для HTML-разметки Telegram."""
-    return html.escape(str(text), quote=False)
+from engine import esc  # noqa: F401  (реэкспорт: обработчики берут esc отсюда)
 
 
 # ---------------------------------------------------------------- длинные сообщения
@@ -146,7 +142,7 @@ async def require_character(message: Message, need_conscious: bool = False) -> s
     if need_conscious and character["hp"] == 0:
         await message.answer(
             f"💀 {esc(character['name'])} без сознания и не может действовать. "
-            "Нужна помощь союзников (/heal)."
+            "Нужна помощь союзников (/heal, /stabilize)."
         )
         return None
     return character
@@ -160,10 +156,23 @@ def hp_line(character) -> str:
         state = "⚰️ погиб"
     elif hp == 0:
         state = "💀 без сознания"
+        if character["death_successes"] >= 3:
+            state += " (стабилен)"
+        elif character["death_failures"] or character["death_successes"]:
+            state += f" (спасброски: ✓{character['death_successes']} ✗{character['death_failures']})"
     elif hp <= max_hp // 3:
         state = "🩸 тяжело ранен"
     elif hp < max_hp:
         state = "🤕 ранен"
     else:
         state = "❤️ здоров"
-    return f"<b>{esc(character['name'])}</b>: {hp}/{max_hp} — {state}"
+    temp = f" (+{character['temp_hp']} врем.)" if character["temp_hp"] else ""
+    return f"<b>{esc(character['name'])}</b>: {hp}/{max_hp}{temp} — {state}"
+
+
+def conditions_text(character) -> str:
+    names = sorted(rules.cond_names(rules.conditions_of(character)) - {"без сознания"})
+    parts = list(names)
+    if rules.exhaustion_of(character):
+        parts.append(f"истощение {rules.exhaustion_of(character)}")
+    return ", ".join(parts)

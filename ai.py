@@ -1,4 +1,8 @@
-"""Генерация игрового контента через Claude API."""
+"""Генерация игрового контента через Claude API.
+
+Числа (опыт за противника, бонус мастерства, пороги) берутся из таблиц правил, а не у модели:
+модель придумывает образ и черновые характеристики, код приводит их к правилам.
+"""
 
 import contextvars
 from dataclasses import dataclass, field
@@ -8,7 +12,8 @@ from pydantic import BaseModel
 
 import db
 import dice
-from config import ANTHROPIC_API_KEY, ATTRIBUTES
+import srd
+from config import ANTHROPIC_API_KEY
 
 MODEL = "claude-opus-5"
 
@@ -20,9 +25,9 @@ current_chat: contextvars.ContextVar[int | None] = contextvars.ContextVar(
 )
 
 BASE_SYSTEM = (
-    "Ты — мастер настольной ролевой игры в духе D&D. Всегда отвечай на русском языке. "
-    "Пиши ярко, атмосферно и достаточно кратко: это сообщения для Telegram-чата. "
-    "Не используй markdown-разметку и HTML-теги — только обычный текст с абзацами."
+    "Ты — мастер настольной ролевой игры по правилам D&D 5-й редакции (Basic Rules). "
+    "Всегда отвечай на русском языке. Пиши ярко, атмосферно и достаточно кратко: это сообщения "
+    "для Telegram-чата. Не используй markdown-разметку и HTML-теги — только обычный текст с абзацами."
 )
 
 
@@ -80,18 +85,26 @@ class CharacterOptions(BaseModel):
 class EnemyBlock(BaseModel):
     name: str
     description: str
+    creature_type: str          # гуманоид, зверь, нежить, чудовище…
+    cr: float                   # уровень опасности: 0, 0.125, 0.25, 0.5, 1, 2, 3…
     hp: int
     armor_class: int
     attack_bonus: int
-    damage_dice: str
+    damage_dice: str            # NdM+K
+    damage_type: str            # рубящий, колющий, огонь, яд…
+    attacks: int                # число атак за ход
+    save_bonus: int             # бонус к спасброскам и проверкам
     initiative_bonus: int
-    xp: int
+    effect_condition: str       # состояние при попадании: отравлен, парализован, испуган… или пусто
+    effect_ability: str         # характеристика спасброска против эффекта
+    effect_dc: int
 
 
 class LootItem(BaseModel):
     name: str
-    kind: str  # weapon | armor | item
-    value: str  # кубик урона для оружия, бонус к КД для доспеха, иначе пусто
+    kind: str          # weapon | armor | shield | item
+    base: str          # название базового предмета из правил (например «Длинный меч») или пусто
+    bonus: int         # магический бонус: 0, 1, 2 или 3
     description: str
 
 
@@ -101,7 +114,8 @@ class LootList(BaseModel):
 
 class CheckRequest(BaseModel):
     character: str
-    attribute: str
+    attribute: str     # характеристика или навык
+    kind: str          # check — проверка, save — спасбросок
     difficulty: int
     reason: str
 
@@ -130,6 +144,16 @@ class SceneContext:
     events: list[str] = field(default_factory=list)
 
 
+CR_VALUES = ", ".join(srd.cr_label(cr) for cr in srd.CR_TABLE if cr <= 8)
+
+# Образцы из Basic Rules (гл. 12, с. 163–164) — чтобы модель держала правильный масштаб
+ENEMY_EXAMPLES = (
+    "Образцы масштаба из правил: Кобольд/Культист — уровень опасности 1/8, КД 12, 9 хитов, атака +3, урон 1d6+1. "
+    "Стражник — 1/8, КД 16, 11 хитов, +3, 1d6+1. Головорез — 1/2, КД 11, 32 хита, две атаки +4 по 1d6+2. "
+    "Жрец — 2, КД 13, 27 хитов, +2. Рыцарь — 3, КД 18, 52 хита, две атаки +5 по 2d6+3. Маг — 6, КД 12, 40 хитов."
+)
+
+
 # ---------------------------------------------------------------- генераторы
 
 async def generate_world(theme: str, tone: str = "") -> str:
@@ -143,17 +167,20 @@ async def generate_world(theme: str, tone: str = "") -> str:
 
 
 async def generate_character_options(
-    theme: str, world_desc: str, attributes: list[str], taken_names: list[str], tone: str = ""
+    theme: str, world_desc: str, race: str, subrace: str, class_name: str, background: str,
+    taken_names: list[str], tone: str = "",
 ) -> list[CharacterOption]:
     taken = ", ".join(taken_names) if taken_names else "пока нет"
+    race_text = f"{race} ({subrace})" if subrace else race
     result = await _parse(
         "hero",
         f"Мир кампании (тема «{theme}»):\n{world_desc}\n\n"
-        f"Игрок выбрал главные атрибуты своего персонажа: {', '.join(attributes)}.\n"
+        f"Игрок создаёт персонажа: раса — {race_text}, класс — {class_name}, предыстория — «{background}».\n"
         f"Уже занятые персонажи (их имена и похожие образы использовать НЕЛЬЗЯ): {taken}.\n\n"
-        "Предложи ровно 3 разных варианта персонажа, подходящих этому миру и этим атрибутам. "
-        "Для каждого: имя (name), архетип/класс (archetype) и живое описание в 2–3 предложениях "
-        "(description). Варианты должны заметно отличаться друг от друга.",
+        "Предложи ровно 3 разных варианта персонажа, подходящих этому миру, расе, классу и предыстории. "
+        "Имена должны звучать так, как принято у этой расы. Для каждого: имя (name), "
+        "короткий образ или прозвище (archetype) и живое описание в 2–3 предложениях (description). "
+        "Варианты должны заметно отличаться друг от друга.",
         CharacterOptions,
         tone,
     )
@@ -173,52 +200,76 @@ async def generate_npc(theme: str, world_desc: str, existing: list[str], tone: s
     )
 
 
+def normalize_enemy(block: EnemyBlock) -> dict:
+    """Приводит черновик модели к правилам: опыт и бонус мастерства — из таблицы, разброс статов ограничен."""
+    cr = srd.nearest_cr(block.cr)
+    prof, xp = srd.CR_TABLE[cr]
+    damage = block.damage_dice if dice.parse_notation(block.damage_dice) else "1d6"
+    attacks = max(1, min(4, block.attacks))
+    avg = dice.average_notation(damage) * attacks
+    max_avg = 8 + 8 * cr
+    if avg > max_avg:  # слишком сильный урон за ход — ослабляем кубик
+        damage = "1d6" if cr < 1 else "2d6"
+    effect = block.effect_condition.strip().casefold()
+    if effect not in srd.CONDITIONS:
+        effect = ""
+    ability = dice.match_name(block.effect_ability, srd.ABILITIES) or srd.CON
+    return {
+        "name": block.name.strip()[:60] or "Противник",
+        "description": block.description.strip(),
+        "cr": cr, "xp": xp,
+        "hp": max(1, min(block.hp, int(20 + 40 * cr))),
+        "armor_class": max(10, min(20, block.armor_class)),
+        "attack_bonus": max(prof, min(prof + 5, block.attack_bonus)),
+        "damage_dice": damage.lower(), "dtype": block.damage_type.strip().casefold()[:20],
+        "attacks": attacks,
+        "save_bonus": max(-1, min(prof + 5, block.save_bonus)),
+        "initiative_bonus": max(-3, min(6, block.initiative_bonus)),
+        "etype": block.creature_type.strip().casefold()[:30],
+        "effect_condition": effect,
+        "effect_ability": ability if effect else "",
+        "effect_dc": max(8, min(8 + prof + 4, block.effect_dc)) if effect else 0,
+    }
+
+
 async def generate_enemy(
-    theme: str,
-    world_desc: str,
-    description: str,
-    party_level: int,
-    party_size: int,
-    difficulty: str,
-    tone: str = "",
-) -> EnemyBlock:
-    enemy = await _parse(
+    theme: str, world_desc: str, description: str, party_level: int, party_size: int,
+    difficulty: str, tone: str = "",
+) -> dict:
+    block = await _parse(
         "enemy",
         f"Мир кампании (тема «{theme}»):\n{world_desc}\n\n"
-        f"Отряд: {party_size} персонаж(ей) {party_level} уровня. "
-        f"Сложность кампании: {difficulty}.\n\n"
+        f"Отряд: {party_size} персонаж(ей) {party_level} уровня. Сложность кампании: {difficulty}.\n\n"
         f"Придумай ОДНОГО противника по описанию мастера: «{description}».\n"
-        "Верни: name (короткое имя, до 3 слов), description (1–2 предложения), "
-        "hp (здоровье: для отряда 1 уровня обычной сложности одиночный противник — 8–15, "
-        "босс — 25–40; масштабируй по уровню и сложности), armor_class (10–17), "
-        "attack_bonus (от +1 до +6), damage_dice в формате NdM+K, например 1d6+2, "
-        "initiative_bonus (от -1 до +4), xp (награда за победу: слабый 10–25, "
-        "обычный 30–60, босс 100–200).",
+        f"cr — уровень опасности по правилам, один из: {CR_VALUES}. Для одного противника против отряда "
+        f"{party_level} уровня подойдёт cr от {max(0, party_level - 3)} до {party_level} "
+        f"(для слабого — 1/8, 1/4, 1/2).\n"
+        f"{ENEMY_EXAMPLES}\n"
+        "Верни: name (до 3 слов), description (1–2 предложения), creature_type (гуманоид, зверь, нежить, "
+        "чудовище, элементаль и т. п.), cr, hp, armor_class (10–20), attack_bonus (бонус мастерства + мод.), "
+        "damage_dice в формате NdM+K, damage_type (рубящий, колющий, дробящий, огонь, холод, яд…), "
+        "attacks (1–3 атаки за ход), save_bonus (бонус к спасброскам), initiative_bonus, "
+        "effect_condition (состояние при попадании: отравлен, парализован, испуган, ослеплён, опутан — "
+        "или пустая строка), effect_ability (характеристика спасброска против эффекта) и effect_dc (8–15).",
         EnemyBlock,
         tone,
     )
-    # Модель может прислать некорректную запись кубиков — тогда безопасное значение
-    if dice.parse_notation(enemy.damage_dice) is None:
-        enemy.damage_dice = "1d6"
-    enemy.hp = max(1, enemy.hp)
-    enemy.armor_class = max(5, min(25, enemy.armor_class))
-    enemy.attack_bonus = max(-2, min(10, enemy.attack_bonus))
-    enemy.initiative_bonus = max(-3, min(6, enemy.initiative_bonus))
-    enemy.xp = max(0, enemy.xp)
-    return enemy
+    return normalize_enemy(block)
 
 
 async def generate_loot(
     theme: str, world_desc: str, context: str, tone: str = ""
 ) -> list[LootItem]:
+    weapons = ", ".join(srd.WEAPONS)
+    armors = ", ".join(srd.ARMORS)
     result = await _parse(
         "loot",
         f"Мир кампании (тема «{theme}»):\n{world_desc}\n\n"
         f"Контекст: {context}\n\n"
-        "Придумай 1–3 предмета добычи, уместных в этой ситуации. Для каждого: "
-        "name (название), kind — строго одно из: weapon, armor, item; "
-        "value — для weapon кубик урона в формате NdM или NdM+K (например 1d8 или 1d6+1), "
-        "для armor бонус к классу доспеха числом от 1 до 4, для item пустая строка; "
+        "Придумай 1–3 предмета добычи, уместных в этой ситуации. Для каждого: name (название), "
+        "kind — строго одно из: weapon, armor, shield, item; base — название базового предмета "
+        f"из правил (для weapon одно из: {weapons}; для armor одно из: {armors}; для shield — «Щит»; "
+        "для item — пустая строка); bonus — магический бонус 0, 1, 2 или 3 (для item — 0; обычно 0 или 1); "
         "description — одно предложение.",
         LootList,
         tone,
@@ -226,18 +277,20 @@ async def generate_loot(
     cleaned: list[LootItem] = []
     for item in result.items[:3]:
         kind = item.kind.strip().lower()
-        if kind == "weapon":
-            if dice.parse_notation(item.value) is None:
-                item.value = "1d6"
-        elif kind == "armor":
-            digits = "".join(ch for ch in item.value if ch.isdigit())
-            item.value = str(max(1, min(4, int(digits)))) if digits else "1"
-        else:
+        pool = {"weapon": srd.WEAPONS, "armor": srd.ARMORS, "shield": [srd.SHIELD_NAME]}.get(kind)
+        base = dice.match_name(item.base, pool) if pool and item.base else None
+        if kind in ("weapon", "armor", "shield") and base is None:
+            kind, base = "item", ""
+        if kind not in ("weapon", "armor", "shield"):
             kind = "item"
-            item.value = ""
-        item.kind = kind
+        item.kind, item.base = kind, base or ""
+        item.bonus = max(0, min(3, item.bonus)) if kind != "item" else 0
         cleaned.append(item)
     return cleaned
+
+
+CHECKABLE_TEXT = ", ".join(srd.ABILITIES) + "; навыки: " + ", ".join(srd.SKILLS)
+DC_TEXT = ", ".join(f"{name} — {dc}" for name, dc in srd.DIFFICULTY_CLASSES.items())
 
 
 async def generate_scene(ctx: SceneContext) -> SceneResult:
@@ -266,7 +319,7 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
         actions_block = "После последней сцены игроки не заявляли действий.\n\n"
     if ctx.events:
         events_block = (
-            "Игровые события после последней сцены (броски, бои, урон — это ФАКТЫ, "
+            "Игровые события после последней сцены (броски, бои, урон, заклинания — это ФАКТЫ, "
             "их исход уже определён кубиками и должен быть отражён в сцене):\n"
             + "\n".join(f"- {e}" for e in ctx.events)
             + "\n\n"
@@ -277,7 +330,7 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
     prompt = (
         f"Мир кампании (тема «{ctx.theme}»):\n{ctx.world_desc}\n\n"
         f"Сложность кампании: {ctx.difficulty}.\n\n"
-        f"Персонажи игроков (с уровнем и здоровьем):\n{chars}\n\n"
+        f"Персонажи игроков (раса, класс, уровень, здоровье, состояния):\n{chars}\n\n"
         f"Известные NPC:\n{npcs}\n\n"
         f"Важные факты и открытые сюжетные нити:\n{facts}\n\n"
         f"{location_block}{summary_block}"
@@ -289,14 +342,18 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
         "проваленные — к осложнениям.\n"
         "2. Не противоречь предыдущим сценам и фактам: учитывай, где герои, что уже случилось "
         "и какие нити открыты.\n"
-        "3. Учитывай здоровье: раненый действует хуже, персонаж с 0 HP без сознания и не "
-        "действует сам, погибший персонаж больше не участвует.\n"
+        "3. Учитывай здоровье и состояния: раненый действует хуже, персонаж с 0 HP без сознания и не "
+        "действует сам, погибший персонаж больше не участвует. Не наноси урон и не убивай персонажей "
+        "текстом сцены — урон и смерть определяют кубики.\n"
         "4. Если действие игрока имеет неопределённый исход и для него ещё НЕТ броска среди "
         "событий, запроси проверку в поле checks (не больше трёх за сцену) и НЕ описывай "
         "исход этого действия в тексте — опиши напряжённый момент и остановись. "
-        f"attribute — строго одно из: {', '.join(ATTRIBUTES)}. difficulty — от 8 до 20. "
+        f"attribute — характеристика или навык, строго из списка: {CHECKABLE_TEXT}. "
+        "kind — check (проверка) или save (спасбросок от опасности). "
+        f"difficulty — сложность по шкале: {DC_TEXT}. "
         "character — точное имя персонажа игрока. reason — одна фраза, что проверяется.\n"
-        "5. text: 2–3 абзаца, заканчивается открытым вопросом к игрокам. "
+        "5. text: 2–3 абзаца, заканчивается открытым вопросом к игрокам. Если герои сталкиваются с "
+        "врагами, опиши их, но не разыгрывай бой — его ведёт мастер командой /enemy и /fight. "
         "location: где отряд находится к концу сцены, коротко. "
         "new_facts: 0–3 новых важных факта (найденные предметы, обещания, имена, зацепки), "
         "которые нужно помнить дальше; пустой список, если ничего важного."

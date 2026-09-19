@@ -10,45 +10,43 @@ Yksi kampanja per Telegram-chat. Tila tallentuu SQLite-tietokantaan (`game.db`).
 ## Pelin kulku
 
 1. **Pelinjohtaja** luo maailman: `/world <teema>`. Luoja on kampanjan mastеr (GM).
-2. Jokainen pelaaja luo hahmon: `/hero` → valitsee 4 pääattribuuttia → botti ehdottaa
-   3 hahmoa → pelaaja valitsee. Sama hahmo ei voi olla kahdella pelaajalla.
-   Attribuuteille arvotaan numeroarvot (4d6, huonoin pois); valitut attribuutit saavat
-   parhaat arvot ja mastery-bonuksen heittoihin.
+2. Jokainen pelaaja luo hahmon säännöillä (D&D 5e Basic Rules): `/hero` → rotu (+alarotu) →
+   luokka → tausta → ominaisuudet (4d6 tai vakiosarja 15,14,13,12,10,8; parhaat arvot menevät
+   luokan pääominaisuuksiin, rotubonukset lisätään) → taidot → (kolmiovaras: asiantuntemus,
+   soturi: taistelutyyli) → 3 nimi/kuvaus-ehdotusta Claudelta. Rodut: kääpiö, haltia, hobitti,
+   ihminen. Luokat: pappi (Elämä), soturi (Mestari), kolmiovaras (Varas), velho (Evokaatio).
 3. `/scene` generoi tilanteen. Se voi pyytää heittoja — silloin viestin alle tulee napit,
    joita vain kyseinen pelaaja voi painaa.
 4. Pelaajat ilmoittavat toimensa `/do <teksti>` ja heittävät tarvittaessa `/roll`.
 5. Seuraava `/scene` on suora seuraus ilmoitetuista toimista ja **kaikista heitoista,
    taisteluista ja vahingoista** — noppatulokset ohjaavat tarinaa.
 
-Taistelu: GM luo vihollisen (`/enemy`), aloittaa taistelun (`/fight`), botti heittää
-aloitteet ja vetää vuorot. Pelaaja hyökkää omalla vuorollaan napista tai `/attack`-
-komennolla, viholliset hyökkäävät automaattisesti. Voitosta saa XP:tä; `/loot` generoi
-saaliin.
+Taistelu: GM luo vihollisen (`/enemy`, myös `3x hiisi`), botti näyttää kohtaamisen vaikeuden
+säännöistä (XP-kynnykset × kerroin), `/fight` heittää aloitteet. Vuorolla on toiminto, bonus-
+toiminto ja reaktio; napit tai komennot. Sisältää: etu/haitta, kriittiset, lisähyökkäys,
+hiipivä isku, tajuttomuus, kuolemanheitot, hetkellinen kuolema, keskittyminen, tilat, uupumus,
+loitsupaikat ja ~50 mekaanisesti toteutettua loitsua. Voitosta XP jaetaan tasan ja tasot
+nousevat automaattisesti (`/asi`, `/learn`, `/cantrip` kun valintoja on kertynyt).
 
 ## Komennot
+
+Täydellinen lista: `/help` botissa. Tärkeimmät:
 
 | Komento | Kuka | Mitä tekee |
 |---|---|---|
 | `/world <teema>` | kuka vain (kerran) | Luo maailman; luojasta tulee GM |
-| `/hero`, `/sheet`, `/delete_hero` | pelaaja | Hahmon luonti, hahmolomake, poisto |
-| `/scene` | kuka vain | Seuraava scene (20 s cooldown, ei taistelun aikana) |
-| `/do <teksti>` | pelaaja | Ilmoita toimi — botti poistaa viestisi ja julkaisee sen hahmon nimissä |
-| `/say <teksti>` tai viesti `"lainausmerkeissä"` | pelaaja | Hahmon repliikki, julkaistaan hahmon nimissä |
-| `/actions`, `/party` | kuka vain | Ilmoitetut toimet ja tapahtumat / kuka on kuka (tulee myös automaattisesti 1. scenen alussa) |
-| `/roll [attr] [DC]`, `/roll 2d6+1` | pelaaja | Heitto; attribuuttiheitot kirjautuvat tarinaan |
-| `/sroll <attr> [DC]` | pelaaja | Salainen heitto — tulos yksityisviestinä pelaajalle ja GM:lle |
-| `/hp`, `/damage N [nimi]`, `/heal N [nimi]` | pelaaja / GM toisille | Terveys |
-| `/take Nimi 1d8` · `/take Nimi +2` · `/take Nimi` | pelaaja | Ase / haarniska / esine |
-| `/equip`, `/drop`, `/inventory` | pelaaja | Varusteet |
-| `/attack [vihollinen]`, `/pass` | pelaaja | Hyökkäys / vuoron ohitus |
-| `/enemies`, `/status`, `/recap`, `/journal` | kuka vain | Tilannekuvat |
-| `/npc` | kuka vain | Uusi NPC |
-| `/enemy <kuvaus>` tai `/enemy Nimi HP KD +atk 1d6` | GM | Vihollinen (AI tai käsin) |
-| `/fight`, `/endfight`, `/loot`, `/xp N` | GM | Taistelu, saalis, kokemus |
-| `/gm` | GM | Näytä / siirrä GM-rooli (vastaa pelaajan viestiin) |
-| `/tone <kuvaus>`, `/difficulty лёгкая\|обычная\|сложная` | GM | Tarinan sävy ja vaikeus |
-| `/backup`, `/usage` | GM | Tietokantakopio yksityisviestinä / tokenkulutus |
-| `/reset` | GM | Tyhjentää kampanjan |
+| `/hero`, `/sheet`, `/skills`, `/delete_hero` | pelaaja | Hahmonluonti, lomake, taidot, poisto |
+| `/scene`, `/do`, `/say`, `/actions`, `/party`, `/npc` | pelaaja | Tarina (`/do` ja `/say` julkaistaan hahmon nimissä) |
+| `/roll`, `/roll 2d6+1`, `/roll Ketteryys 15 haitta`, `/sroll`, `/save` | pelaaja | Taito-/ominaisuusheitot, salainen heitto, pelastusheitto |
+| `/attack`, `/endturn`, `/order`, `/enemies` | pelaaja | Taistelu (napit ilmestyvät vuorolla) |
+| `/dodge`, `/hide`, `/assist`, `/shove`, `/stabilize` | pelaaja | Yleiset toiminnot |
+| `/secondwind`, `/surge`, `/cunning`, `/channel`, `/inspire` | pelaaja | Luokkakyvyt |
+| `/spells`, `/cast`, `/prepare`, `/learn`, `/cantrip`, `/recover` | pelaaja | Taikuus |
+| `/hp`, `/damage`, `/heal`, `/temp`, `/hitdice` | pelaaja / GM toisille | Terveys |
+| `/take`, `/equip`, `/unequip`, `/drop`, `/inventory` | pelaaja | Varusteet (säännöistä: `/take Pitkämiekka`, `/take Rengashaarniska +1`) |
+| `/asi`, `/expertise` | pelaaja | Tasonnousun valinnat |
+| `/enemy`, `/fight`, `/endfight`, `/loot`, `/xp`, `/rest`, `/condition`, `/exhaustion`, `/inspiration` | GM | Vihollinen, taistelu, saalis, XP, lepo, tilat |
+| `/gm`, `/tone`, `/difficulty`, `/backup`, `/usage`, `/reset` | GM | Kampanjan hallinta |
 
 Yksityischatissa käyttäjä on aina GM. Ryhmässä, jos GM:ää ei ole asetettu (vanha
 kampanja), rajoituksia ei ole ennen kuin joku ajaa `/gm`.
@@ -84,17 +82,17 @@ python -m pytest tests
 ## Rakenne
 
 - `bot.py` — käynnistys, reitittimien kytkentä, komentovalikko
-- `handlers/setup.py` — maailma, GM, sävy, vaikeus, status, reset, backup, usage
-- `handlers/hero.py` — hahmonluonti (välitila tietokannassa, napit omistajalukittuja), lomake
-- `handlers/story.py` — sceneet, toimet, AI:n pyytämät heitot, NPC, recap, journal
-- `handlers/fight.py` — heitot, HP, XP, tavarat, viholliset, taistelu
-- `handlers/common.py` — viestien pilkkominen, virheenkäsittely, oikeudet
-- `ai.py` — Claude-kutsut (rakenteiset vastaukset sceneille, hahmoille, vihollisille, saaliille)
-- `combat.py` — aloite, vuorot, hyökkäykset, kuolonheitot
-- `rules.py` — modifikaattorit, mastery, AC, HP, tasot (puhtaat funktiot)
-- `dice.py` — noppanotaatio ja heitot
-- `db.py` — SQLite ja migraatiot
-- `config.py` — säädettävät vakiot (HP, XP, cooldown, attribuutit…)
+- `srd.py`, `spelldata.py` — sääntötaulukot (rodut, luokat, aseet, haarniskat, loitsut, tilat, CR/XP)
+- `rules.py`, `dice.py` — puhtaat säännöt ja nopat (ei Telegramia, ei tietokantaa)
+- `engine.py`, `combat.py`, `spells.py`, `features.py`, `creation.py`, `items.py` — pelilogiikka
+- `db.py` — SQLite ja migraatiot (schema_version 3, vanhat kampanjat siirtyvät automaattisesti)
+- `ai.py` — Claude-kutsut (maailma, hahmoehdotukset, viholliset, saalis, sceneet)
+- `handlers/` — Telegram-kerros: `setup`, `hero`, `story`, `checks`, `items`, `magic`, `fight`, `turns`, `common`
+- `bot.py` — käynnistys ja komentovalikko
+
+Tietoiset yksinkertaistukset: ei paikannusta (hiipivä isku: mikä tahansa tajuissaan oleva liittolainen,
+aluevaikutukset osuvat rajattuun määrään vihollisia), ei kamppailua/Dash/Ready-toimintoja,
+Suojelu- ja Kahden aseen taistelutyylejä ei ole, Vahvistus vain tekstinä, XP jaetaan tasan.
 
 ## Miten AI pidetään johdonmukaisena
 

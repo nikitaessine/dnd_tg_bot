@@ -10,6 +10,7 @@ from aiogram.types import FSInputFile, Message
 
 import ai
 import db
+import rules
 from config import DIFFICULTIES, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M
 from handlers.common import (
     answer_long,
@@ -24,37 +25,33 @@ from handlers.common import (
 router = Router()
 
 HELP = (
-    "🎲 <b>D&D-бот</b>\n\n"
+    "🎲 <b>D&D-бот</b> — правила D&D 5e (Basic Rules)\n\n"
     "<b>Начало игры</b>\n"
     "/world &lt;тема&gt; — создать мир (создавший становится мастером)\n"
-    "/hero — создать персонажа: 4 атрибута → 3 варианта → выбор\n"
-    "/sheet — лист своего персонажа\n"
-    "/status — обзор кампании\n"
-    "/recap — «в предыдущих сериях»\n"
-    "/journal — где отряд и что важно помнить\n\n"
+    "/hero — создать персонажа: раса, класс, предыстория, характеристики, навыки\n"
+    "/sheet — лист персонажа · /skills — навыки · /inventory — инвентарь\n"
+    "/status — обзор кампании · /recap — «в предыдущих сериях» · /journal — журнал\n\n"
     "<b>Ход игры</b>\n"
-    "/scene — следующая сцена (учитывает действия, броски и бои)\n"
-    "/do &lt;действие&gt; — заявить, что делает герой (публикуется от лица персонажа)\n"
-    "/say &lt;реплика&gt; или сообщение в «кавычках» — герой говорит\n"
-    "/actions — что уже заявлено · /party — кто есть кто\n"
-    "/npc — новый NPC\n\n"
-    "<b>Кубики</b>\n"
-    "/roll — d20 · /roll Ловкость — проверка · /roll Ловкость 15 — со сложностью · /roll 2d6+1\n"
-    "/sroll Ловкость 15 — тайная проверка: результат в личку тебе и мастеру\n\n"
-    "<b>Здоровье и предметы</b>\n"
-    "/hp · /damage 5 · /heal 3\n"
-    "/take Меч 1d8 · /take Кольчуга +2 · /take Верёвка — взять предмет\n"
-    "/equip &lt;предмет&gt; · /drop &lt;предмет&gt; · /inventory\n\n"
+    "/scene — следующая сцена · /do &lt;действие&gt; · /say &lt;реплика&gt; или «кавычки»\n"
+    "/actions · /party · /npc\n\n"
+    "<b>Кубики и проверки</b>\n"
+    "/roll · /roll 2d6+1 · /roll Ловкость · /roll Скрытность 15 помеха · /sroll Восприятие 15 (тайно)\n"
+    "/save Ловкость 14 — спасбросок\n\n"
     "<b>Бой</b>\n"
-    "/attack &lt;враг&gt; — атака (в бою — только в свой ход)\n"
-    "/pass — пропустить ход · /enemies — противники\n\n"
+    "Ход: кнопки под сообщением или /attack &lt;враг&gt; · /endturn · /order · /enemies\n"
+    "Действия: /dodge · /hide · /assist &lt;имя&gt; · /shove &lt;враг&gt; · /stabilize &lt;имя&gt;\n"
+    "Воин: /secondwind · /surge · Плут: /cunning рывок|отход|скрыться\n"
+    "Жрец: /channel сохранение|изгнание\n\n"
+    "<b>Магия</b>\n"
+    "/spells · /cast &lt;заклинание&gt; [ячейка] [цель, цель] · /prepare · /learn · /cantrip · /recover\n\n"
+    "<b>Здоровье, предметы, развитие</b>\n"
+    "/hp · /damage 5 [имя] · /heal 3 [имя] · /temp 5 [имя] · /hitdice [сколько]\n"
+    "/take Длинный меч · /take Кольчуга +1 · /equip · /unequip · /drop\n"
+    "/asi Сила Ловкость · /expertise Навык, Навык · /inspire\n\n"
     "<b>Мастер игры</b>\n"
-    "/gm — кто мастер; ответом на сообщение игрока — передать роль\n"
-    "/enemy &lt;описание&gt; — придумать противника (или вручную: /enemy Гоблин 7 13 +3 1d6)\n"
-    "/fight — начать бой · /endfight — закончить · /loot — добыча\n"
-    "/xp 50 — выдать опыт всем · /tone &lt;описание&gt; · /difficulty лёгкая|обычная|сложная\n"
-    "/backup — копия базы · /usage — расход токенов\n"
-    "/reset — стереть кампанию · /delete_hero — удалить своего героя"
+    "/gm · /enemy &lt;описание | Имя HP КД +атака кубик&gt; (можно «3x …») · /fight · /endfight\n"
+    "/loot · /xp 300 [имя] · /rest короткий|долгий · /condition · /exhaustion · /inspiration\n"
+    "/tone · /difficulty · /backup · /usage · /reset · /delete_hero"
 )
 
 
@@ -189,7 +186,7 @@ async def cmd_status(message: Message) -> None:
     characters = db.list_characters(chat_id)
     if characters:
         for c in characters:
-            lines.append(f"• {hp_line(c)} — {c['level']} ур. — {esc(c['user_name'])}")
+            lines.append(f"• {hp_line(c)} — {rules.race_of(c)} {rules.class_of(c)} {c['level']} ур. — {esc(c['user_name'])}")
     else:
         lines.append("• пока нет")
 

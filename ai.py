@@ -26,8 +26,10 @@ current_chat: contextvars.ContextVar[int | None] = contextvars.ContextVar(
 
 BASE_SYSTEM = (
     "Ты — мастер настольной ролевой игры по правилам D&D 5-й редакции (Basic Rules). "
-    "Всегда отвечай на русском языке. Пиши ярко, атмосферно и достаточно кратко: это сообщения "
-    "для Telegram-чата. Не используй markdown-разметку и HTML-теги — только обычный текст с абзацами."
+    "Всегда отвечай на русском языке. Пиши простым разговорным языком: короткие предложения, "
+    "обычные слова, без сложных метафор, редких слов и длинных описаний. Текст должен легко читаться "
+    "с первого раза. Это сообщения для Telegram-чата — пиши кратко. Не используй markdown-разметку "
+    "и HTML-теги — только обычный текст с абзацами."
 )
 
 
@@ -120,11 +122,21 @@ class CheckRequest(BaseModel):
     reason: str
 
 
+class NewNpc(BaseModel):
+    name: str
+    description: str
+
+
 class SceneResult(BaseModel):
     text: str
     location: str
     new_facts: list[str]
     checks: list[CheckRequest]
+    new_npcs: list[NewNpc] = []
+    revealed_npcs: list[str] = []
+    gm_enemies_appear: bool = False
+    new_enemy: str = ""
+    new_enemy_count: int = 0
 
 
 @dataclass
@@ -139,6 +151,9 @@ class SceneContext:
     first_recent_number: int = 1
     characters: list[str] = field(default_factory=list)
     npcs: list[str] = field(default_factory=list)
+    hidden_npcs: list[str] = field(default_factory=list)
+    hidden_enemies: list[str] = field(default_factory=list)
+    visible_enemies: list[str] = field(default_factory=list)
     facts: list[str] = field(default_factory=list)
     actions: list[str] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
@@ -187,15 +202,16 @@ async def generate_character_options(
     return result.options[:3]
 
 
-async def generate_npc(theme: str, world_desc: str, existing: list[str], tone: str = "") -> str:
+async def generate_npc(theme: str, world_desc: str, existing: list[str], tone: str = "", hint: str = "") -> str:
     existing_text = ", ".join(existing) if existing else "пока нет"
+    hint_text = f"Пожелание мастера: «{hint}».\n\n" if hint else ""
     return await _text(
         "npc",
         f"Мир кампании (тема «{theme}»):\n{world_desc}\n\n"
-        f"Уже существующие NPC: {existing_text}.\n\n"
+        f"Уже существующие NPC: {existing_text}.\n\n{hint_text}"
         "Придумай одного нового NPC, не похожего на существующих. "
         "Первая строка — только имя NPC. Затем описание: кто он, характер, "
-        "чего хочет и как может быть связан с приключением. 1–2 абзаца.",
+        "чего хочет и как может быть связан с приключением. 3–5 предложений.",
         tone,
     )
 
@@ -297,6 +313,25 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
     chars = "\n".join(f"- {c}" for c in ctx.characters) if ctx.characters else "- пока нет"
     npcs = "\n".join(f"- {n}" for n in ctx.npcs) if ctx.npcs else "- пока нет"
     facts = "\n".join(f"- {f}" for f in ctx.facts) if ctx.facts else "- пока нет"
+    secret_block = ""
+    if ctx.hidden_npcs:
+        secret_block += (
+            "NPC, которых мастер тайно подготовил (игроки о них ещё не знают). Введи их в сюжет, "
+            "когда это логично, и перечисли имена введённых в revealed_npcs:\n"
+            + "\n".join(f"- {n}" for n in ctx.hidden_npcs) + "\n\n"
+        )
+    if ctx.hidden_enemies:
+        secret_block += (
+            "Противники, которых мастер тайно подготовил: " + "; ".join(ctx.hidden_enemies)
+            + ". Это следующая угроза. Приведи героев к ним в этой или следующей сцене. Когда они "
+            "появляются в тексте, поставь gm_enemies_appear = true. Пока они не появились, не придумывай "
+            "других противников (new_enemy пустой).\n\n"
+        )
+    if ctx.visible_enemies:
+        secret_block += (
+            "Противники уже здесь, бой ещё не начат: " + "; ".join(ctx.visible_enemies)
+            + ". Новых противников не добавляй.\n\n"
+        )
 
     if ctx.recent_scenes:
         history = "\n\n".join(
@@ -333,7 +368,7 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
         f"Персонажи игроков (раса, класс, уровень, здоровье, состояния):\n{chars}\n\n"
         f"Известные NPC:\n{npcs}\n\n"
         f"Важные факты и открытые сюжетные нити:\n{facts}\n\n"
-        f"{location_block}{summary_block}"
+        f"{secret_block}{location_block}{summary_block}"
         f"Последние сцены:\n{history}\n\n"
         f"{actions_block}{events_block}"
         "Сгенерируй СЛЕДУЮЩУЮ сцену приключения. Правила:\n"
@@ -352,8 +387,17 @@ async def generate_scene(ctx: SceneContext) -> SceneResult:
         "kind — check (проверка) или save (спасбросок от опасности). "
         f"difficulty — сложность по шкале: {DC_TEXT}. "
         "character — точное имя персонажа игрока. reason — одна фраза, что проверяется.\n"
-        "5. text: 2–3 абзаца, заканчивается открытым вопросом к игрокам. Если герои сталкиваются с "
-        "врагами, опиши их, но не разыгрывай бой — его ведёт мастер командой /enemy и /fight. "
+        "5. Темп: сюжет должен двигаться. Каждая сцена приносит что-то новое: зацепку, препятствие, "
+        "встречу, опасность или решение. Не держи героев в одном месте дольше 2–3 сцен — веди их к "
+        "следующей цели. Но не меняй место и ситуацию в каждой сцене без причины. Больше действия, "
+        "меньше описаний.\n"
+        "6. Противники. Если по логике сюжета сейчас начинается схватка и других противников нет, "
+        "опиши их и заполни new_enemy (кто это, коротко) и new_enemy_count (1–6). Не устраивай схватку "
+        "сразу после боя — дай героям хотя бы одну сцену передышки. Обычно схватка бывает раз в 3–5 "
+        "сцен. Не разыгрывай бой в тексте — его ведёт бот.\n"
+        "7. new_npcs: новые важные персонажи, которых ты ввёл в этой сцене (имя и одно предложение, "
+        "кто это). Не повторяй уже известных NPC. Пустой список, если новых нет.\n"
+        "8. text: 1–2 коротких абзаца, заканчивается открытым вопросом к игрокам. "
         "location: где отряд находится к концу сцены, коротко. "
         "new_facts: 0–3 новых важных факта (найденные предметы, обещания, имена, зацепки), "
         "которые нужно помнить дальше; пустой список, если ничего важного."

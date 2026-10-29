@@ -20,7 +20,7 @@ Testit (BOT_TOKEN pitää olla asetettu, arvolla ei ole väliä):
 
     $env:BOT_TOKEN='1:a'; $env:ANTHROPIC_API_KEY='x'; .\venv\Scripts\python.exe -m pytest -q
 
-Tila viimeksi: 207 testiä läpi. Testit eivät lähetä Telegramiin mitään, joten HTML-jäsennysvirheet eivät näy niissä.
+Tila viimeksi: 209 testiä läpi. Testit eivät lähetä Telegramiin mitään, joten HTML-jäsennysvirheet eivät näy niissä.
 
 # Deploy
 
@@ -35,7 +35,7 @@ Tuotannon tietokanta on tehty vanhalla skeemalla (esim. `characters.attributes` 
 # Tila
 
 - Sääntöuudistus (rodut, luokat, taistelu, loitsut, varusteet) on koodattu ja deployattu (commit `95f3e32`).
-- Korjattu tuotantoa kokeillessa: (1) HTML-jäsennysvirhe ohjeviesteissä (deployattu), (2) hahmon tallennus kaatui vanhan skeeman `attributes`-sarakkeeseen ja näkyi väärällä viestillä "hahmo varattu" (korjaus `db.py`:ssä, commit `9c1523f`, **deploy palvelimelle ei vahvistettu**, tarkista että `git push` ja `update.sh` on ajettu).
+- Korjattu tuotantoa kokeillessa: (1) HTML-jäsennysvirhe ohjeviesteissä (deployattu), (2) hahmon tallennus kaatui vanhan skeeman `attributes`-sarakkeeseen ja näkyi väärällä viestillä "hahmo varattu" (korjaus `db.py`:ssä, commit `9c1523f`, deployattu ja vahvistettu palvelimelta 2026-10-29).
 - Hahmonluonti, taistelu ja loitsut on testattu vain yksikkötesteillä, ei vielä oikeassa Telegram-ryhmässä. Ensimmäinen oikea koe tehty vain `/hero`-polulle.
 - Avoin kysymys: voiko pelinjohtajalla olla hahmo? Nyt voi (botti ei estä). Tarjottu vaihtoehtoja (esto tai tila jossa GM ei näe salaisia heittoja), käyttäjä ei ole vielä päättänyt.
 

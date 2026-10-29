@@ -100,3 +100,40 @@ def test_creation_views_within_limits():
             for b in row:
                 assert len(b.callback_data.encode()) <= 64
                 assert re.match(r"^hc:\d+:[a-z]+:[\w]+$", b.callback_data)
+
+
+# ---------------------------------------------------------------- тайные противники и NPC мастера
+
+GROUP = -100
+
+
+def test_hidden_enemies_wait_and_block_auto_encounter():
+    import asyncio
+    import ai
+    make_world(GROUP)
+    assert db.gm_group_chat(10) == GROUP and db.gm_group_chat(11) is None
+    make_enemy("Тролль", hp=30, chat_id=GROUP, hidden=1)
+    make_enemy("Тролль", hp=30, chat_id=GROUP, hidden=1)
+    assert db.list_enemies(GROUP) == []                       # игроки их не видят
+    assert [e["name"] for e in db.list_enemies(GROUP, hidden=True)] == ["Тролль", "Тролль 2"]
+    game = db.get_world(GROUP)
+    scene = ai.SceneResult(text="", location="", new_facts=[], checks=[], new_enemy="Гоблин 7 13 +3 1d6")
+    # пока тролли ждут, своего противника модель не добавляет
+    assert asyncio.run(story._scene_enemies(None, GROUP, game, scene)) == []
+    scene.gm_enemies_appear = True
+    assert len(asyncio.run(story._scene_enemies(None, GROUP, game, scene))) == 2
+    assert len(db.list_enemies(GROUP)) == 2 and db.list_enemies(GROUP, hidden=True) == []
+    # тролли уже здесь — новых тоже нет
+    assert asyncio.run(story._scene_enemies(None, GROUP, game, scene)) == []
+    for e in db.list_enemies(GROUP):
+        db.update_enemy(e["id"], alive=0)
+    scene.new_enemy_count = 2
+    assert [e["name"] for e in asyncio.run(story._scene_enemies(None, GROUP, game, scene))] == ["Гоблин", "Гоблин 2"]
+
+
+def test_hidden_npc_revealed_by_name():
+    make_world(GROUP)
+    db.save_npc(GROUP, "Мира", "Мира — травница", hidden=True)
+    assert db.list_npcs(GROUP) == []
+    db.reveal_npcs(GROUP, ["Мира"])
+    assert [n["name"] for n in db.list_npcs(GROUP)] == ["Мира"]

@@ -201,6 +201,8 @@ _MIGRATIONS = [
     ("enemies", "effect_ability", "TEXT NOT NULL DEFAULT ''"),
     ("enemies", "effect_dc", "INTEGER NOT NULL DEFAULT 0"),
     ("combat", "state", "TEXT NOT NULL DEFAULT '{}'"),
+    ("enemies", "hidden", "INTEGER NOT NULL DEFAULT 0"),
+    ("npcs", "hidden", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 _ALL_TABLES = (
@@ -381,17 +383,36 @@ def delete_draft(chat_id: int, user_id: int) -> None:
 
 # ---------------------------------------------------------------- NPC
 
-def save_npc(chat_id: int, name: str, description: str) -> None:
+def save_npc(chat_id: int, name: str, description: str, hidden: bool = False) -> None:
     c = conn()
     c.execute(
-        "INSERT INTO npcs (chat_id, name, description) VALUES (?, ?, ?)",
-        (chat_id, name, description),
+        "INSERT INTO npcs (chat_id, name, description, hidden) VALUES (?, ?, ?, ?)",
+        (chat_id, name, description, int(hidden)),
     )
     c.commit()
 
 
-def list_npcs(chat_id: int) -> list[sqlite3.Row]:
-    return conn().execute("SELECT * FROM npcs WHERE chat_id = ? ORDER BY id", (chat_id,)).fetchall()
+def list_npcs(chat_id: int, hidden: bool = False) -> list[sqlite3.Row]:
+    """hidden=True — NPC, тайно подготовленные мастером и ещё не встреченные игроками."""
+    return conn().execute(
+        "SELECT * FROM npcs WHERE chat_id = ? AND hidden = ? ORDER BY id", (chat_id, int(hidden))
+    ).fetchall()
+
+
+def reveal_npcs(chat_id: int, names: list[str]) -> None:
+    c = conn()
+    for name in names:
+        c.execute("UPDATE npcs SET hidden = 0 WHERE chat_id = ? AND name = ?", (chat_id, name.strip()))
+    c.commit()
+
+
+def gm_group_chat(user_id: int) -> int | None:
+    """Группа, где пользователь — мастер (последняя созданная). Для тайных команд из лички."""
+    row = conn().execute(
+        "SELECT chat_id FROM games WHERE gm_user_id = ? AND chat_id < 0 ORDER BY rowid DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    return row["chat_id"] if row else None
 
 
 # ---------------------------------------------------------------- сцены
@@ -473,7 +494,7 @@ def list_facts(chat_id: int, limit: int = 30) -> list[sqlite3.Row]:
 
 def _unique_enemy_name(chat_id: int, name: str) -> str:
     """Имена живых противников уникальны: «Гоблин», «Гоблин 2», «Гоблин 3»."""
-    taken = {r["name"] for r in list_enemies(chat_id)}
+    taken = {r["name"] for r in list_enemies(chat_id) + list_enemies(chat_id, hidden=True)}
     if name not in taken:
         return name
     n = 2
@@ -504,11 +525,20 @@ def get_enemy(enemy_id: int) -> sqlite3.Row | None:
     return conn().execute("SELECT * FROM enemies WHERE id = ?", (enemy_id,)).fetchone()
 
 
-def list_enemies(chat_id: int, alive_only: bool = True) -> list[sqlite3.Row]:
-    sql = "SELECT * FROM enemies WHERE chat_id = ?"
+def list_enemies(chat_id: int, alive_only: bool = True, hidden: bool = False) -> list[sqlite3.Row]:
+    """hidden=True — противники, тайно подготовленные мастером: в бою и списках их нет, пока не появятся."""
+    sql = "SELECT * FROM enemies WHERE chat_id = ? AND hidden = ?"
     if alive_only:
         sql += " AND alive = 1"
-    return conn().execute(sql + " ORDER BY id", (chat_id,)).fetchall()
+    return conn().execute(sql + " ORDER BY id", (chat_id, int(hidden))).fetchall()
+
+
+def reveal_enemies(chat_id: int) -> list[sqlite3.Row]:
+    revealed = list_enemies(chat_id, hidden=True)
+    c = conn()
+    c.execute("UPDATE enemies SET hidden = 0 WHERE chat_id = ?", (chat_id,))
+    c.commit()
+    return revealed
 
 
 def find_enemy(chat_id: int, query: str) -> sqlite3.Row | None:

@@ -22,9 +22,11 @@ from handlers.common import (
     generate,
     require_character,
     require_world,
+    secret_chat,
     try_delete,
     try_react,
 )
+from handlers.fight import enemy_lines, make_enemies
 
 router = Router()
 
@@ -122,6 +124,21 @@ def _check_buttons(chat_id: int, checks) -> tuple[list[str], InlineKeyboardMarku
     return ["", "🎯 <b>Мастер просит проверки:</b>", *lines], InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _enemy_names(enemies) -> list[str]:
+    return [f"{e['name']} ({e['description']})" if e["description"] else e["name"] for e in enemies]
+
+
+async def _scene_enemies(note: Message, chat_id: int, game, result) -> list:
+    """Противники сцены. Тайные противники мастера идут первыми: пока они ждут или уже здесь,
+    своих новых модель не добавляет — две засады подряд не случится."""
+    if db.list_enemies(chat_id, hidden=True):
+        return db.reveal_enemies(chat_id) if result.gm_enemies_appear else []
+    if db.list_enemies(chat_id) or not result.new_enemy.strip():
+        return []
+    count = max(1, min(result.new_enemy_count or 1, 6))
+    return await make_enemies(note, chat_id, game, result.new_enemy.strip()[:200], count) or []
+
+
 @router.message(Command("scene"))
 async def cmd_scene(message: Message) -> None:
     game = await require_world(message)
@@ -159,6 +176,9 @@ async def cmd_scene(message: Message) -> None:
             first_recent_number=recent[0]["number"] if recent else 1,
             characters=_character_summaries(chat_id),
             npcs=[n["description"] for n in db.list_npcs(chat_id)],
+            hidden_npcs=[n["description"] for n in db.list_npcs(chat_id, hidden=True)],
+            hidden_enemies=_enemy_names(db.list_enemies(chat_id, hidden=True)),
+            visible_enemies=_enemy_names(db.list_enemies(chat_id)),
             facts=[f["text"] for f in db.list_facts(chat_id)],
             actions=[f"{a['character_name']}: {a['text']}" for a in pending if a["kind"] == "action"],
             events=[f"{a['character_name']}: {a['text']}" for a in pending if a["kind"] != "action"],
@@ -173,8 +193,16 @@ async def cmd_scene(message: Message) -> None:
         for fact in result.new_facts[:3]:
             if fact.strip():
                 db.add_fact(chat_id, number, fact.strip()[:300])
+        db.reveal_npcs(chat_id, result.revealed_npcs)
+        known = {n["name"].casefold() for n in db.list_npcs(chat_id) + db.list_npcs(chat_id, hidden=True)}
+        for npc in result.new_npcs[:3]:
+            if npc.name.strip() and npc.name.strip().casefold() not in known:
+                db.save_npc(chat_id, npc.name.strip()[:100], f"{npc.name.strip()} — {npc.description.strip()}")
 
         text = f"📜 <b>Сцена {number}</b>\n\n{esc(result.text)}"
+        foes = await _scene_enemies(note, chat_id, game, result)
+        if foes:
+            text += "\n\n" + "\n".join(enemy_lines(foes) + ["Мастер начинает бой: /fight"])
         check_lines, keyboard = _check_buttons(chat_id, result.checks)
         if check_lines:
             text += "\n" + "\n".join(check_lines)
@@ -302,21 +330,32 @@ async def cmd_actions(message: Message) -> None:
 
 
 @router.message(Command("npc"))
-async def cmd_npc(message: Message) -> None:
-    game = await require_world(message)
-    if game is None:
-        return
+async def cmd_npc(message: Message, command: CommandObject) -> None:
+    secret = secret_chat(message)
+    if secret is not None:
+        chat_id, game = secret, db.get_world(secret)
+    else:
+        game = await require_world(message)
+        if game is None:
+            return
+        chat_id = message.chat.id
     note = await message.answer("🧙 Придумываю NPC…")
-    existing = [n["name"] for n in db.list_npcs(message.chat.id)]
+    existing = [n["name"] for n in db.list_npcs(chat_id) + db.list_npcs(chat_id, hidden=True)]
+    hint = (command.args or "").strip()[:300]
     text = await generate(
-        note, ai.generate_npc(game["theme"], game["world_desc"], existing, game["tone"]),
-        "придумать NPC",
+        note, ai.generate_npc(game["theme"], game["world_desc"], existing, game["tone"], hint),
+        "придумать NPC", chat_id,
     )
     if text is None:
         return
     name = text.split("\n", 1)[0].strip("*# ").strip()[:100]
-    db.save_npc(message.chat.id, name, text)
-    db.add_fact(message.chat.id, db.current_situation_number(message.chat.id), f"В мире появился NPC: {name}")
+    if secret is not None:
+        db.save_npc(chat_id, name, text, hidden=True)
+        await edit_long(note, f"🤫 <b>Тайный NPC для игры «{esc(game['theme'])}»</b> — игроки встретят его, "
+                              f"когда сюжет к нему приведёт.\n\n{esc(text)}")
+        return
+    db.save_npc(chat_id, name, text)
+    db.add_fact(chat_id, db.current_situation_number(chat_id), f"В мире появился NPC: {name}")
     await edit_long(note, f"🧙 <b>Новый NPC</b>\n\n{esc(text)}")
 
 

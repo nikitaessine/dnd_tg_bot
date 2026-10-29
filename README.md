@@ -21,6 +21,11 @@ Yksi kampanja per Telegram-chat. Tila tallentuu SQLite-tietokantaan (`game.db`).
 5. Seuraava `/scene` on suora seuraus ilmoitetuista toimista ja **kaikista heitoista,
    taisteluista ja vahingoista** — noppatulokset ohjaavat tarinaa.
 
+Viholliset ja NPC:t: `/scene` tuo välillä itse vihollisia ja NPC:itä tarinan mukaan. GM voi
+valmistella niitä salaa kirjoittamalla `/enemy` tai `/npc [toive]` botille yksityisviestillä:
+ne eivät näy ryhmässä ennen kuin tarina tuo ne esiin. Kun GM:n vihollinen odottaa, botti ei
+keksi omia vihollisia, joten kaksi väijytystä ei tule peräkkäin.
+
 Taistelu: GM luo vihollisen (`/enemy`, myös `3x hiisi`), botti näyttää kohtaamisen vaikeuden
 säännöistä (XP-kynnykset × kerroin), `/fight` heittää aloitteet. Vuorolla on toiminto, bonus-
 toiminto ja reaktio; napit tai komennot. Sisältää: etu/haitta, kriittiset, lisähyökkäys,

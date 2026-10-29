@@ -50,6 +50,7 @@ HELP = (
     "/asi Сила Ловкость · /expertise Навык, Навык · /inspire\n\n"
     "<b>Мастер игры</b>\n"
     "/gm · /enemy &lt;описание | Имя HP КД +атака кубик&gt; (можно «3x …») · /fight · /endfight\n"
+    "Тайно: /enemy и /npc [пожелание] в личке боту — появятся в сцене, когда сюжет к ним приведёт\n"
     "/loot · /xp 300 [имя] · /rest короткий|долгий · /condition · /exhaustion · /inspiration\n"
     "/tone · /difficulty · /backup · /usage · /reset · /delete_hero"
 )

@@ -22,6 +22,7 @@ from handlers.common import (
     require_character,
     require_gm,
     require_world,
+    secret_chat,
 )
 from handlers.turns import finish_turn, next_markup, present
 
@@ -44,51 +45,68 @@ def parse_manual_enemy(text: str) -> dict | None:
             "attack_bonus": int(atk), "damage_dice": dmg.lower(), "cr": cr, "xp": srd.CR_TABLE[cr][1]}
 
 
-@router.message(Command("enemy"))
-async def cmd_enemy(message: Message, command: CommandObject) -> None:
-    game = await require_world(message)
-    if game is None or not await require_gm(message, game):
-        return
-    text = (command.args or "").strip()
-    if not text:
-        await message.answer("Опиши противника: /enemy болотный тролль\nНесколько одинаковых: /enemy 3x гоблины-лучники\n"
-                             "Вручную: /enemy Гоблин 7 13 +3 1d6 (хиты, КД, атака, урон)")
-        return
-    chat_id = message.chat.id
-    count = 1
-    m = COUNT.match(text)
-    if m:
-        count, text = max(1, min(int(m.group(1)), 8)), text[m.end():].strip()
-    fields = parse_manual_enemy(text)
-    note = None
-    if fields is None:
-        note = await message.answer("👹 Придумываю противника…")
-        party = db.list_characters(chat_id, alive_only=True)
-        level = max((c["level"] for c in party), default=1)
-        fields = await generate(
-            note, ai.generate_enemy(game["theme"], game["world_desc"], text, level, max(1, len(party)),
-                                    game["difficulty"], game["tone"]), "придумать противника")
-        if fields is None:
-            return
-    created = [db.save_enemy(chat_id, **fields) for _ in range(count)]
-    lines = ["👹 <b>Появляется противник:</b>" if count == 1 else "👹 <b>Появляются противники:</b>"]
-    for e in created:
+def enemy_lines(enemies) -> list[str]:
+    lines = ["👹 <b>Появляется противник:</b>" if len(enemies) == 1 else "👹 <b>Появляются противники:</b>"]
+    for e in enemies:
         lines.append(f"• <b>{esc(e['name'])}</b> — {e['hp']} HP, КД {e['armor_class']}, атака "
                      f"{rules.format_modifier(e['attack_bonus'])}, урон {e['damage_dice']}"
                      + (f" ×{e['attacks']}" if e["attacks"] > 1 else "")
                      + f", уровень опасности {srd.cr_label(e['cr'])} ({e['xp']} опыта)")
-    if fields.get("description"):
-        lines.append(esc(fields["description"]))
-    if fields.get("effect_condition"):
-        lines.append(f"Эффект попадания: {fields['effect_condition']} (спасбросок {fields['effect_ability']} "
-                     f"сл. {fields['effect_dc']})")
-    lines.append(engine.format_difficulty(engine.encounter_difficulty(chat_id)))
-    lines.append("Начать бой: /fight")
-    text_out = "\n".join(l for l in lines if l)
-    if note is not None:
-        await edit_long(note, text_out)
+    for desc in dict.fromkeys(e["description"] for e in enemies if e["description"]):
+        lines.append(esc(desc))
+    for e in {e["effect_condition"]: e for e in enemies if e["effect_condition"]}.values():
+        lines.append(f"Эффект попадания: {e['effect_condition']} (спасбросок {e['effect_ability']} "
+                     f"сл. {e['effect_dc']})")
+    return lines
+
+
+async def make_enemies(note: Message, chat_id: int, game, text: str, count: int, hidden: bool = False):
+    """Создаёт противников по описанию (ИИ) или по ручным статам. None — если генерация не удалась."""
+    fields = parse_manual_enemy(text)
+    if fields is None:
+        party = db.list_characters(chat_id, alive_only=True)
+        level = max((c["level"] for c in party), default=1)
+        fields = await generate(
+            note, ai.generate_enemy(game["theme"], game["world_desc"], text, level, max(1, len(party)),
+                                    game["difficulty"], game["tone"]), "придумать противника", chat_id)
+        if fields is None:
+            return None
+    return [db.save_enemy(chat_id, hidden=int(hidden), **fields) for _ in range(count)]
+
+
+@router.message(Command("enemy"))
+async def cmd_enemy(message: Message, command: CommandObject) -> None:
+    secret = secret_chat(message)
+    if secret is not None:
+        chat_id, game = secret, db.get_world(secret)
     else:
-        await answer_long(message, text_out)
+        game = await require_world(message)
+        if game is None or not await require_gm(message, game):
+            return
+        chat_id = message.chat.id
+    text = (command.args or "").strip()
+    if not text:
+        await message.answer("Опиши противника: /enemy болотный тролль\nНесколько одинаковых: /enemy 3x гоблины-лучники\n"
+                             "Вручную: /enemy Гоблин 7 13 +3 1d6 (хиты, КД, атака, урон)\n"
+                             "Тайно: напиши /enemy мне в личку — противник появится, когда сюжет к нему приведёт.")
+        return
+    count = 1
+    m = COUNT.match(text)
+    if m:
+        count, text = max(1, min(int(m.group(1)), 8)), text[m.end():].strip()
+    note = await message.answer("👹 Придумываю противника…")
+    created = await make_enemies(note, chat_id, game, text, count, hidden=secret is not None)
+    if created is None:
+        return
+    lines = enemy_lines(created)
+    if secret is not None:
+        lines[0] = f"🤫 <b>Тайно подготовлено для игры «{esc(game['theme'])}»:</b>"
+        lines.append(engine.format_difficulty(engine.encounter_difficulty(chat_id, created)))
+        lines.append("Игроки не видят их, пока они не появятся в сцене. Или начни бой сразу: /fight в группе.")
+    else:
+        lines.append(engine.format_difficulty(engine.encounter_difficulty(chat_id)))
+        lines.append("Начать бой: /fight")
+    await edit_long(note, "\n".join(l for l in lines if l))
 
 
 @router.message(Command("enemies"))
@@ -115,14 +133,16 @@ async def cmd_fight(message: Message) -> None:
     if combat.in_combat(chat_id):
         await message.answer("Бой уже идёт. Порядок ходов: /order")
         return
-    if not db.list_enemies(chat_id):
+    if not db.list_enemies(chat_id) and not db.list_enemies(chat_id, hidden=True):
         await message.answer("Нет противников. Сначала: /enemy &lt;описание&gt;")
         return
     if not db.list_characters(chat_id, alive_only=True):
         await message.answer("В отряде нет героев: /hero")
         return
+    revealed = db.reveal_enemies(chat_id)
+    lines = enemy_lines(revealed) + [""] if revealed else []
     combat.start(chat_id)
-    lines = ["⚔️ <b>Бой начинается!</b>", combat.format_order(chat_id), ""]
+    lines += ["⚔️ <b>Бой начинается!</b>", combat.format_order(chat_id), ""]
     more, over = combat.run_until_player(chat_id)
     await answer_long(message, "\n".join(lines + more), None if over else next_markup(chat_id))
 

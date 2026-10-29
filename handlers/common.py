@@ -100,10 +100,10 @@ def chat_lock(chat_id: int) -> asyncio.Lock:
     return _locks.setdefault(chat_id, asyncio.Lock())
 
 
-async def generate(note: Message, coro, what: str = "сгенерировать"):
+async def generate(note: Message, coro, what: str = "сгенерировать", chat_id: int | None = None):
     """Ждёт корутину генерации. При ошибке API заменяет заглушку понятным сообщением
     и возвращает None, чтобы обработчик мог просто выйти."""
-    ai.current_chat.set(note.chat.id)
+    ai.current_chat.set(chat_id or note.chat.id)
     try:
         return await coro
     except anthropic.RateLimitError:
@@ -131,6 +131,13 @@ def is_gm(message: Message, game: sqlite3.Row | None) -> bool:
     if game is None or game["gm_user_id"] is None:
         return True
     return game["gm_user_id"] == message.from_user.id
+
+
+def secret_chat(message: Message) -> int | None:
+    """Команда мастера из лички: группа, для которой он тайно готовит NPC и противников."""
+    if message.chat.type != "private":
+        return None
+    return db.gm_group_chat(message.from_user.id)
 
 
 async def require_world(message: Message) -> sqlite3.Row | None:

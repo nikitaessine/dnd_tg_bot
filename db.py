@@ -12,7 +12,7 @@ import srd
 from config import DB_PATH, DEFAULT_DIFFICULTY
 
 _conn: sqlite3.Connection | None = None
-SCHEMA_VERSION = 3  # 2: опыт хранится суммарно (таблица правил); 3: правила Basic Rules
+SCHEMA_VERSION = 4  # 2: опыт хранится суммарно (таблица правил); 3: правила Basic Rules; 4: games.created_at
 
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS games (
@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS games (
     difficulty TEXT NOT NULL DEFAULT '{DEFAULT_DIFFICULTY}',
     summary TEXT NOT NULL DEFAULT '',
     summary_upto INTEGER NOT NULL DEFAULT 0,
-    location TEXT NOT NULL DEFAULT ''
+    location TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS characters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,6 +204,7 @@ _MIGRATIONS = [
     ("combat", "state", "TEXT NOT NULL DEFAULT '{}'"),
     ("enemies", "hidden", "INTEGER NOT NULL DEFAULT 0"),
     ("npcs", "hidden", "INTEGER NOT NULL DEFAULT 0"),
+    ("games", "created_at", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 _ALL_TABLES = (
@@ -222,6 +224,10 @@ def _migrate(c: sqlite3.Connection) -> None:
         for row in c.execute("SELECT id, level, xp FROM characters").fetchall():
             total = srd.XP_FOR_LEVEL[max(1, min(row["level"], srd.MAX_LEVEL)) - 1] + row["xp"]
             c.execute("UPDATE characters SET xp = ? WHERE id = ?", (total, row["id"]))
+    if version < 4:
+        # Время создания старых миров неизвестно: порядок восстанавливаем по последнему созданному герою.
+        c.execute("UPDATE games SET created_at = COALESCE("
+                  "(SELECT MAX(id) FROM characters WHERE characters.chat_id = games.chat_id), 0)")
     c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     c.commit()
 
@@ -262,10 +268,10 @@ def _update(table: str, where: dict, fields: dict) -> None:
 def set_world(chat_id: int, theme: str, world_desc: str, gm_user_id: int) -> None:
     c = conn()
     c.execute(
-        "INSERT INTO games (chat_id, theme, world_desc, gm_user_id) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(chat_id) DO UPDATE SET theme = excluded.theme, "
-        "world_desc = excluded.world_desc, gm_user_id = excluded.gm_user_id",
-        (chat_id, theme, world_desc, gm_user_id),
+        "INSERT INTO games (chat_id, theme, world_desc, gm_user_id, created_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(chat_id) DO UPDATE SET theme = excluded.theme, world_desc = excluded.world_desc, "
+        "gm_user_id = excluded.gm_user_id, created_at = excluded.created_at",
+        (chat_id, theme, world_desc, gm_user_id, int(time.time())),
     )
     c.commit()
 
@@ -407,9 +413,10 @@ def reveal_npcs(chat_id: int, names: list[str]) -> None:
 
 
 def gm_group_chat(user_id: int) -> int | None:
-    """Группа, где пользователь — мастер (последняя созданная). Для тайных команд из лички."""
+    """Группа, где пользователь — мастер (мир создан последним). Для команд мастера из лички."""
+    # rowid здесь не годится: при chat_id INTEGER PRIMARY KEY rowid и есть chat_id
     row = conn().execute(
-        "SELECT chat_id FROM games WHERE gm_user_id = ? AND chat_id < 0 ORDER BY rowid DESC LIMIT 1",
+        "SELECT chat_id FROM games WHERE gm_user_id = ? AND chat_id < 0 ORDER BY created_at DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     return row["chat_id"] if row else None

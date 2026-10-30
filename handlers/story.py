@@ -202,7 +202,7 @@ async def cmd_scene(message: Message) -> None:
         text = f"📜 <b>Сцена {number}</b>\n\n{esc(result.text)}"
         foes = await _scene_enemies(note, chat_id, game, result)
         if foes:
-            text += "\n\n" + "\n".join(enemy_lines(foes) + ["Мастер начинает бой: /fight"])
+            text += "\n\n" + "\n".join(enemy_lines(foes) + ["Мастер начинает бой: /fight (в личке боту)"])
         check_lines, keyboard = _check_buttons(chat_id, result.checks)
         if check_lines:
             text += "\n" + "\n".join(check_lines)

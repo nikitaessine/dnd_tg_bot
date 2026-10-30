@@ -6,7 +6,7 @@ import sqlite3
 
 import anthropic
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import InlineKeyboardMarkup, Message, ReactionTypeEmoji
+from aiogram.types import Chat, InlineKeyboardMarkup, Message, ReactionTypeEmoji
 
 import ai
 import db
@@ -131,6 +131,39 @@ def is_gm(message: Message, game: sqlite3.Row | None) -> bool:
     if game is None or game["gm_user_id"] is None:
         return True
     return game["gm_user_id"] == message.from_user.id
+
+
+# Команды мастера пишутся только в личку боту. Тайные (ответ остаётся в личке) обрабатывают сами;
+# публичные выполняются для группы мастера, и результат видят все игроки.
+GM_SECRET = {"enemy", "npc", "backup", "usage"}
+GM_PUBLIC = {"fight", "endfight", "xp", "loot", "rest", "condition", "exhaustion", "inspiration",
+             "tone", "difficulty"}
+# Урон и лечение игроки делают и себе в группе, а мастер может и из лички
+FROM_DM = GM_PUBLIC | {"damage", "heal", "temp"}
+
+
+def command_name(message: Message) -> str:
+    text = message.text or ""
+    if not text.startswith("/"):
+        return ""
+    return text.split()[0][1:].split("@")[0].casefold()
+
+
+async def gm_commands_middleware(handler, message: Message, data: dict):
+    """В группе команды мастера убираются с подсказкой; из лички мастера выполняются для его группы."""
+    name = command_name(message)
+    if not name:
+        return await handler(message, data)
+    if message.chat.type != "private" and name in GM_SECRET | GM_PUBLIC:
+        await try_delete(message)
+        me = await message.bot.me()
+        await message.answer(f"👑 Команды мастера пиши мне в личку: @{me.username}")
+        return None
+    if name in FROM_DM:
+        group = secret_chat(message)
+        if group is not None:
+            message = message.model_copy(update={"chat": Chat(id=group, type="group")})
+    return await handler(message, data)
 
 
 def secret_chat(message: Message) -> int | None:

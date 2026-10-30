@@ -10,6 +10,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
 from handlers import checks, fight, hero, items, magic, setup, story
+from handlers.common import gm_commands_middleware
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,6 +39,7 @@ COMMANDS = [
 async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    dp.message.outer_middleware(gm_commands_middleware)
     dp.include_routers(
         setup.router, hero.router, checks.router, items.router, magic.router, fight.router, story.router
     )

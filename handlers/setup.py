@@ -20,6 +20,7 @@ from handlers.common import (
     hp_line,
     require_gm,
     require_world,
+    secret_chat,
 )
 
 router = Router()
@@ -33,7 +34,7 @@ HELP = (
     "/status — обзор кампании · /recap — «в предыдущих сериях» · /journal — журнал\n\n"
     "<b>Ход игры</b>\n"
     "/scene — следующая сцена · /do &lt;действие&gt; · /say &lt;реплика&gt; или «кавычки»\n"
-    "/actions · /party · /npc\n\n"
+    "/actions · /party\n\n"
     "<b>Кубики и проверки</b>\n"
     "/roll · /roll 2d6+1 · /roll Ловкость · /roll Скрытность 15 помеха · /sroll Восприятие 15 (тайно)\n"
     "/save Ловкость 14 — спасбросок\n\n"
@@ -48,11 +49,12 @@ HELP = (
     "/hp · /damage 5 [имя] · /heal 3 [имя] · /temp 5 [имя] · /hitdice [сколько]\n"
     "/take Длинный меч · /take Кольчуга +1 · /equip · /unequip · /drop\n"
     "/asi Сила Ловкость · /expertise Навык, Навык · /inspire\n\n"
-    "<b>Мастер игры</b>\n"
-    "/gm · /enemy &lt;описание | Имя HP КД +атака кубик&gt; (можно «3x …») · /fight · /endfight\n"
-    "Тайно: /enemy и /npc [пожелание] в личке боту — появятся в сцене, когда сюжет к ним приведёт\n"
-    "/loot · /xp 300 [имя] · /rest короткий|долгий · /condition · /exhaustion · /inspiration\n"
-    "/tone · /difficulty · /backup · /usage · /reset · /delete_hero"
+    "<b>Мастер игры</b> — /world, /gm и /reset в группе, остальное пиши боту в личку\n"
+    "Тайно: /enemy &lt;описание | Имя HP КД +атака кубик&gt; (можно «3x …») и /npc [пожелание] — "
+    "появятся в сцене, когда сюжет к ним приведёт\n"
+    "В группу: /fight · /endfight · /loot · /xp 300 [имя] · /rest короткий|долгий · /condition · "
+    "/exhaustion · /inspiration · /tone · /difficulty · /damage · /heal\n"
+    "Только тебе: /backup · /usage"
 )
 
 
@@ -214,7 +216,8 @@ async def cmd_status(message: Message) -> None:
 
 @router.message(Command("backup"))
 async def cmd_backup(message: Message) -> None:
-    game = await require_world(message)
+    secret = secret_chat(message)
+    game = db.get_world(secret) if secret is not None else await require_world(message)
     if game is None or not await require_gm(message, game):
         return
     fd, path = tempfile.mkstemp(prefix="dnd-backup-", suffix=".db")
@@ -235,10 +238,11 @@ async def cmd_backup(message: Message) -> None:
 
 @router.message(Command("usage"))
 async def cmd_usage(message: Message) -> None:
-    game = await require_world(message)
+    secret = secret_chat(message)
+    game = db.get_world(secret) if secret is not None else await require_world(message)
     if game is None or not await require_gm(message, game):
         return
-    totals = db.usage_totals(message.chat.id)
+    totals = db.usage_totals(game["chat_id"])
     cost = (
         totals["input_tokens"] / 1_000_000 * PRICE_INPUT_PER_M
         + totals["output_tokens"] / 1_000_000 * PRICE_OUTPUT_PER_M

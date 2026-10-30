@@ -137,3 +137,39 @@ def test_hidden_npc_revealed_by_name():
     assert db.list_npcs(GROUP) == []
     db.reveal_npcs(GROUP, ["Мира"])
     assert [n["name"] for n in db.list_npcs(GROUP)] == ["Мира"]
+
+
+def test_gm_dm_targets_newest_world_not_largest_chat_id(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1000)
+    make_world(-5)                       # у старых групп id ближе к нулю
+    monkeypatch.setattr(time, "time", lambda: 2000)
+    make_world(-1003)
+    assert db.gm_group_chat(10) == -1003
+    monkeypatch.setattr(time, "time", lambda: 3000)
+    db.reset_game(-5)
+    make_world(-5)                       # /reset и новый мир — теперь он самый новый
+    assert db.gm_group_chat(10) == -5
+
+
+def test_gm_command_from_dm_runs_for_group():
+    import asyncio
+    from aiogram import Bot
+    from aiogram.types import Message
+    from handlers.common import command_name, gm_commands_middleware
+    make_world(GROUP)
+    bot = Bot("1:a")
+    def dm(text, user=10):
+        return Message.model_validate({
+            "message_id": 1, "date": 0, "text": text,
+            "chat": {"id": user, "type": "private"},
+            "from": {"id": user, "is_bot": False, "first_name": "GM"},
+        }).as_(bot)
+    seen = []
+    async def handler(message, data):
+        seen.append((message.chat.id, message.bot is bot))
+    assert command_name(dm("/fight@botdendi_bot")) == "fight"
+    asyncio.run(gm_commands_middleware(handler, dm("/fight"), {}))
+    asyncio.run(gm_commands_middleware(handler, dm("/roll"), {}))         # команда игрока — как была
+    asyncio.run(gm_commands_middleware(handler, dm("/fight", user=11), {}))  # не мастер — своя личка
+    assert seen == [(GROUP, True), (10, True), (11, True)]

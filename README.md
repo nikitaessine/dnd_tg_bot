@@ -41,7 +41,7 @@ Täydellinen lista: `/help` botissa. Tärkeimmät:
 |---|---|---|
 | `/world <teema>` | kuka vain (kerran) | Luo maailman; luojasta tulee GM |
 | `/hero`, `/sheet`, `/skills`, `/delete_hero` | pelaaja | Hahmonluonti, lomake, taidot, poisto |
-| `/scene`, `/do`, `/say`, `/actions`, `/party`, `/npc` | pelaaja | Tarina (`/do` ja `/say` julkaistaan hahmon nimissä) |
+| `/scene`, `/do`, `/say`, `/actions`, `/party` | pelaaja | Tarina (`/do` ja `/say` julkaistaan hahmon nimissä) |
 | `/roll`, `/roll 2d6+1`, `/roll Ketteryys 15 haitta`, `/sroll`, `/save` | pelaaja | Taito-/ominaisuusheitot, salainen heitto, pelastusheitto |
 | `/attack`, `/endturn`, `/order`, `/enemies` | pelaaja | Taistelu (napit ilmestyvät vuorolla) |
 | `/dodge`, `/hide`, `/assist`, `/shove`, `/stabilize` | pelaaja | Yleiset toiminnot |
@@ -50,8 +50,13 @@ Täydellinen lista: `/help` botissa. Tärkeimmät:
 | `/hp`, `/damage`, `/heal`, `/temp`, `/hitdice` | pelaaja / GM toisille | Terveys |
 | `/take`, `/equip`, `/unequip`, `/drop`, `/inventory` | pelaaja | Varusteet (säännöistä: `/take Pitkämiekka`, `/take Rengashaarniska +1`) |
 | `/asi`, `/expertise` | pelaaja | Tasonnousun valinnat |
-| `/enemy`, `/fight`, `/endfight`, `/loot`, `/xp`, `/rest`, `/condition`, `/exhaustion`, `/inspiration` | GM | Vihollinen, taistelu, saalis, XP, lepo, tilat |
-| `/gm`, `/tone`, `/difficulty`, `/backup`, `/usage`, `/reset` | GM | Kampanjan hallinta |
+| `/enemy`, `/npc` | GM, yksityisviesti | Salainen vihollinen / NPC (vastaus vain GM:lle) |
+| `/fight`, `/endfight`, `/loot`, `/xp`, `/rest`, `/condition`, `/exhaustion`, `/inspiration`, `/tone`, `/difficulty` | GM, yksityisviesti | Tulos julkaistaan ryhmään |
+| `/backup`, `/usage` | GM, yksityisviesti | Vastaus vain GM:lle |
+| `/gm`, `/reset` | GM, ryhmässä | Kampanjan hallinta |
+
+GM-komennot kirjoitetaan botille yksityisviestillä. Botti kohdistaa ne ryhmään, jossa GM loi
+uusimman maailman. Jos GM-komennon kirjoittaa ryhmään, botti poistaa sen ja neuvoo yksityisviestiin.
 
 Yksityischatissa käyttäjä on aina GM. Ryhmässä, jos GM:ää ei ole asetettu (vanha
 kampanja), rajoituksia ei ole ennen kuin joku ajaa `/gm`.

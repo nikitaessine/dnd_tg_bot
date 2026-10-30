@@ -10,7 +10,7 @@ Stack: Python (paikallinen venv 3.12, palvelimella 3.14), aiogram 3.x, anthropic
 
 - Puhdas logiikka, ei Telegramia: `srd.py` (taulukot), `spelldata.py` (loitsut), `dice.py`, `rules.py`
 - Pelilogiikka: `engine.py` (tarkistukset, vahinko, XP), `combat.py`, `spells.py`, `features.py` (luokkakyvyt, lepo), `creation.py`, `items.py`
-- `db.py`: skeema + migraatiot (`SCHEMA_VERSION = 3`). Vanhat kampanjat migroituvat automaattisesti.
+- `db.py`: skeema + migraatiot (`SCHEMA_VERSION = 4`). Vanhat kampanjat migroituvat automaattisesti.
 - `ai.py`: Claude-kutsut. `handlers/`: Telegram-kerros (`setup`, `hero`, `story`, `checks`, `items`, `magic`, `fight`, `turns`, `common`). `bot.py`: käynnistys.
 - Kaikki HTML-viestit: käyttäjän tai mallin teksti aina `esc()`:n läpi, ja kulmasulut ohjeteksteissä muodossa `&lt;…&gt;` (muuten Telegram hylkää viestin). `answer_long`/`edit_long` putoavat pelkkään tekstiin jos jäsennys epäonnistuu.
 
@@ -20,7 +20,7 @@ Testit (BOT_TOKEN pitää olla asetettu, arvolla ei ole väliä):
 
     $env:BOT_TOKEN='1:a'; $env:ANTHROPIC_API_KEY='x'; .\venv\Scripts\python.exe -m pytest -q
 
-Tila viimeksi: 209 testiä läpi. Testit eivät lähetä Telegramiin mitään, joten HTML-jäsennysvirheet eivät näy niissä.
+Tila viimeksi: 211 testiä läpi. Testit eivät lähetä Telegramiin mitään, joten HTML-jäsennysvirheet eivät näy niissä.
 
 # Deploy
 
